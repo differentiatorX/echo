@@ -78,6 +78,23 @@ def stats():
         typer.echo(f"{p.get('hook_title')}: {p.get('stats')}")
 
 
+@app.command("install-skill")
+def install_skill(force: bool = typer.Option(False, "--force", help="Overwrite an existing copy")):
+    """Install the /hookcut skill into Claude Code (~/.claude/skills/hookcut)."""
+    import shutil
+    from pathlib import Path
+    src = Path(__file__).parent / "claude_skill" / "SKILL.md"
+    dest_dir = Path.home() / ".claude" / "skills" / "hookcut"
+    dest = dest_dir / "SKILL.md"
+    if dest.exists() and not force:
+        typer.echo(f"Already installed at {dest}. Use --force to update it.")
+        raise typer.Exit(0)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest)
+    typer.secho(f"Installed /hookcut for Claude Code at {dest}", fg="green")
+    typer.echo('Open Claude Code anywhere and type:  /hookcut https://youtube.com/watch?v=...')
+
+
 @app.command()
 def doctor():
     """Check your setup."""
