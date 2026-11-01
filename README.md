@@ -118,6 +118,24 @@ hookcut run "https://youtube.com/watch?v=..." --clips 4 --style beast
 hookcut rerender <job-id> c02
 ```
 
+## Use it inside Claude Code
+
+Hookcut ships a Claude Code skill. Install it once:
+
+```bash
+hookcut install-skill
+```
+
+Then, in Claude Code from any folder:
+
+```
+/hookcut https://youtube.com/watch?v=... 4 beast
+```
+
+Or just say "make reels from this" and paste a link. Claude Code runs the pipeline, then reviews every clip like an editor. It reads the opening words and checks frames for framing and caption placement. Clips with a slow start, a rambling ending or a vague hook get fixed and re-rendered. You get a post-or-skip verdict per clip with captions ready to paste. It never posts unless you ask.
+
+After pulling a newer Hookcut, refresh the skill with `hookcut install-skill --force`.
+
 ## Post to Instagram
 
 Hookcut posts through Instagram's official Graph API, with no browser automation.
