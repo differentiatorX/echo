@@ -10,7 +10,7 @@ FONTS = PKG / "assets" / "fonts"
 PROMPTS = PKG / "prompts"
 WEB = PKG / "web"
 
-HOME = Path(os.environ.get("HOOKCUT_HOME", Path.home() / ".hookcut"))
+HOME = Path(os.environ.get("ECHO_HOME", Path.home() / ".echo"))
 JOBS = HOME / "jobs"
 UPLOADS = HOME / "uploads"
 SETTINGS_PATH = HOME / "settings.json"
@@ -25,7 +25,7 @@ DEFAULTS: dict = {
         "api_model": "claude-sonnet-5-5",  # used when backend = api (needs ANTHROPIC_API_KEY)
         "timeout": 600,
     },
-    "clips": {"count": 4, "min_len": 25, "max_len": 55, "candidates": 12},
+    "clips": {"count": 4, "min_len": 25, "max_len": 55, "candidates": 12, "topic": ""},
     "language": "en",
     "whisper": {"model": "auto", "rough_model": "base"},
     "signals": {"heatmap": True, "comments": True, "max_comments": 400},
@@ -36,10 +36,15 @@ DEFAULTS: dict = {
         "punch_zoom": 1.12, "punch_every": 3.2,
     },
     "style": {
-        "preset": "hookcut", "hook_title": True, "hook_seconds": 2.6,
+        "preset": "echo", "hook_title": True, "hook_seconds": 2.6,
         "progress_bar": True, "watermark": "",
+        "logo": "",                       # path to a PNG shown top-right (brand kit)
+        "sfx": True,                      # whoosh on the cold-open cut, soft pops on keywords
+        "sfx_volume": 0.35,
+        "music": "",                      # an audio file or a folder of them; ducked under the voice
+        "music_volume": 0.18,
     },
-    "render": {"encoder": "auto", "crf": 20, "fps": 30},
+    "render": {"encoder": "auto", "crf": 20, "fps": 30, "aspect": "9:16"},
     "publish": {
         "mode": "facebook",               # facebook (local upload) | instagram (needs public_base_url)
         "ig_user_id": "", "access_token": "", "api_version": "v26.0",
@@ -48,6 +53,10 @@ DEFAULTS: dict = {
     },
     "server": {"host": "127.0.0.1", "port": 7777},
 }
+
+
+LENGTHS = {"short": (15, 30), "medium": (25, 55), "long": (45, 90)}
+ASPECTS = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080)}
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -60,7 +69,18 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+def _migrate() -> None:
+    """Move data from the old Hookcut folder the first time Echo runs."""
+    old = Path.home() / ".hookcut"
+    if "ECHO_HOME" not in os.environ and old.exists() and not HOME.exists():
+        try:
+            old.rename(HOME)
+        except OSError:
+            pass
+
+
 def ensure_dirs() -> None:
+    _migrate()
     for d in (HOME, JOBS, UPLOADS, FEEDBACK):
         d.mkdir(parents=True, exist_ok=True)
 

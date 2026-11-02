@@ -9,13 +9,13 @@ import tempfile
 
 import requests
 
-from .util import HookcutError, run, which
+from .util import EchoError, run, which
 
 
 def _claude_code(prompt: str, cfg: dict) -> str:
     exe = which("claude")
     if not exe:
-        raise HookcutError("Claude Code CLI not found. Install it and run `claude` once to log in, "
+        raise EchoError("Claude Code CLI not found. Install it and run `claude` once to log in, "
                            "or set llm.backend to \"api\".")
     with tempfile.TemporaryDirectory() as empty:  # empty cwd: nothing for it to go read
         out = run([exe, "-p", "--model", cfg["cli_model"], "--output-format", "json"],
@@ -25,21 +25,21 @@ def _claude_code(prompt: str, cfg: dict) -> str:
     except json.JSONDecodeError:
         return out
     if data.get("is_error"):
-        raise HookcutError(f"Claude Code error: {data.get('result')}")
+        raise EchoError(f"Claude Code error: {data.get('result')}")
     return data.get("result", "")
 
 
 def _api(prompt: str, cfg: dict) -> str:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
-        raise HookcutError("Set ANTHROPIC_API_KEY to use llm.backend = \"api\".")
+        raise EchoError("Set ANTHROPIC_API_KEY to use llm.backend = \"api\".")
     r = requests.post("https://api.anthropic.com/v1/messages", timeout=cfg.get("timeout", 600),
                       headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                                "content-type": "application/json"},
                       json={"model": cfg["api_model"], "max_tokens": 8000,
                             "messages": [{"role": "user", "content": prompt}]})
     if r.status_code >= 400:
-        raise HookcutError(f"Anthropic API {r.status_code}: {r.text[:300]}")
+        raise EchoError(f"Anthropic API {r.status_code}: {r.text[:300]}")
     return "".join(b.get("text", "") for b in r.json().get("content", []))
 
 
@@ -68,4 +68,4 @@ def complete_json(prompt: str, cfg: dict):
         try:
             return extract_json(text)
         except ValueError as e:
-            raise HookcutError(f"Model did not return JSON: {text[:300]}") from e
+            raise EchoError(f"Model did not return JSON: {text[:300]}") from e

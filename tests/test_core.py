@@ -1,9 +1,9 @@
-from hookcut.captions import build_ass
-from hookcut.config import DEFAULTS
-from hookcut.edit import find_quote, plan
-from hookcut.ingest import _json3_words, words_to_lines
-from hookcut.select import _overlap, pick
-from hookcut.signals import Signals
+from echoclip.captions import build_ass
+from echoclip.config import DEFAULTS
+from echoclip.edit import find_quote, plan
+from echoclip.ingest import _json3_words, words_to_lines
+from echoclip.select import _overlap, pick
+from echoclip.signals import Signals
 
 TEXT = ("nobody tells you this um but most people quit one week before it works "
         "then one video did a million views overnight and everything changed").split()
@@ -41,7 +41,7 @@ def test_find_quote_is_fuzzy():
 def test_ass_has_events_and_hook():
     ws = words()
     r = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS)
-    ass = build_ass(r["words"], r["duration"], "hookcut", "Most people quit too early", watermark="@me")
+    ass = build_ass(r["words"], r["duration"], "echo", "Most people quit too early", watermark="@me")
     assert "Style: Cap,Anton" in ass and "MOST PEOPLE" in ass and "@me" in ass
     assert ass.count("Dialogue: 1,") >= len(r["words"]) - 2
 
@@ -70,3 +70,35 @@ def test_pick_avoids_overlap_and_duplicates():
     c = {"start": 100, "end": 130, "score": 70, "hook_title": "Another idea", "why": "z"}
     assert _overlap(a, b) > 0.5
     assert [x["start"] for x in pick([a, b, c], 3)] == [0, 100]
+
+
+def test_new_caption_styles_and_aspects():
+    from echoclip.captions import PRESETS
+    from echoclip.config import ASPECTS
+    ws = words()
+    r = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS)
+    for style in ("solo", "neon"):
+        ass = build_ass(r["words"], r["duration"], style, "Hook", size=ASPECTS["4:5"])
+        assert "PlayResY: 1350" in ass and f"Style: Cap,{PRESETS[style]['font']}" in ass
+    assert "\\\\blur4" in build_ass(r["words"], r["duration"], "neon").replace("\\", "\\\\")
+
+
+def test_instagram_check_flags_problems():
+    from echoclip.api import instagram_check
+    notes = instagram_check({"hook_title": "", "hashtags": ["#a"] * 7, "ig_caption": "just a caption"},
+                            {"words": [{"s": 1.2}], "duration": 120})
+    text = " ".join(notes)
+    assert "starts late" in text and "Over 90" in text and "hook" in text and "hashtags" in text and "send" in text
+
+
+def test_connect_merges_without_clobbering(tmp_path, monkeypatch):
+    import json
+    import echoclip.connect as c
+    monkeypatch.setattr(c, "H", tmp_path)
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor" / "mcp.json").write_text('{"mcpServers": {"other": {"command": "x"}}}')
+    c.TARGETS["cursor"] = [lambda: tmp_path / ".cursor" / "mcp.json"]
+    c.connect("cursor", True)
+    data = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+    assert "other" in data["mcpServers"] and data["mcpServers"]["echo"]["args"][-1] == "mcp"
+    assert (tmp_path / ".cursor" / "mcp.json.bak").exists()

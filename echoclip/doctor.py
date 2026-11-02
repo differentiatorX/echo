@@ -4,7 +4,7 @@ from __future__ import annotations
 import importlib.util
 import os
 
-from .util import HookcutError, run, which
+from .util import EchoError, run, which
 
 
 def _ok(name: str, ok: bool, detail: str, fix: str = "") -> dict:
@@ -20,7 +20,7 @@ def checks() -> list[dict]:
     if ff:
         try:
             libass = " subtitles " in run(["ffmpeg", "-hide_banner", "-filters"], timeout=20)
-        except HookcutError:
+        except EchoError:
             pass
     out.append(_ok("ffmpeg", bool(ff and libass), "found with libass" if libass else "missing or no libass",
                    "Install a full ffmpeg build (Windows: `winget install Gyan.FFmpeg`, macOS: `brew install ffmpeg`)."))
@@ -39,9 +39,37 @@ def checks() -> list[dict]:
         out.append(_ok("Claude", bool(os.environ.get("ANTHROPIC_API_KEY")), "Anthropic API",
                        "Set the ANTHROPIC_API_KEY environment variable."))
     else:
-        out.append(_ok("Claude", bool(which("claude")), "Claude Code CLI (your subscription)",
-                       "Install Claude Code, then run `claude` once to log in."))
+        has = bool(which("claude"))
+        out.append(_ok("Claude CLI", True, "found" if has else "not installed, only needed for the studio and `echoclip run`; agents don't need it"))
     p = cfg["publish"]
     out.append(_ok("Instagram", bool(p["ig_user_id"] and p["access_token"]),
                    f"{p['mode']} login", "Optional. Add your IG user ID and token in Settings to post."))
+    return out
+
+
+def fix_all() -> list[str]:
+    """Install what's missing. Python packages via pip; ffmpeg via the OS package manager."""
+    import platform
+    import subprocess
+    import sys
+    out = []
+    for mod, pkg in (("yt_dlp", "yt-dlp"), ("faster_whisper", "faster-whisper"), ("mcp", "mcp")):
+        if importlib.util.find_spec(mod) is None:
+            out.append(f"Installing {pkg}…")
+            p = subprocess.run([sys.executable, "-m", "pip", "install", "-U", pkg], capture_output=True, text=True)
+            out.append("  done" if p.returncode == 0 else f"  failed: {p.stderr.strip()[-200:]}")
+    if not which("ffmpeg"):
+        sysname = platform.system()
+        cmd = (["winget", "install", "-e", "--id", "Gyan.FFmpeg", "--accept-source-agreements", "--accept-package-agreements"]
+               if sysname == "Windows" else ["brew", "install", "ffmpeg"] if sysname == "Darwin"
+               else ["sudo", "apt-get", "install", "-y", "ffmpeg"])
+        if which(cmd[0]):
+            out.append("Installing ffmpeg… (this can take a minute)")
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            out.append("  done. Close and reopen your terminal so it's found." if p.returncode == 0
+                       else f"  failed: {(p.stderr or p.stdout).strip()[-200:]}")
+        else:
+            out.append(f"Install ffmpeg yourself: {' '.join(cmd)}")
+    if not out:
+        out.append("Nothing to fix.")
     return out

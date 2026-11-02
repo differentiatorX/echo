@@ -6,7 +6,7 @@ Below is a timestamped transcript ({{RANGE}}). Lines may carry audience tags:
 - <COMMENTED xN> = N top comments quote this timestamp.
 Treat tags as strong evidence, but a tagged line still needs to work as a standalone clip.
 
-Find up to {{N}} candidate clips, each {{MIN}}-{{MAX}} seconds.
+{{TOPIC}}Find up to {{N}} candidate clips, each {{MIN}}-{{MAX}} seconds, for Instagram Reels. Instagram ranks Reels mostly on watch time and on sends per reach (people DMing it to a friend), so favor rewatchable moments someone would send to a specific friend.
 
 A great candidate:
 - Has a first sentence that stops the scroll on its own: a bold claim, a number, a confession, conflict, a question, a "nobody tells you" reveal.

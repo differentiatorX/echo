@@ -1,4 +1,4 @@
-"""Job runner. Every artifact lives in ~/.hookcut/jobs/<id>/ and every stage is idempotent,
+"""Job runner. Every artifact lives in ~/.echo/jobs/<id>/ and every stage is idempotent,
 so re-running a job resumes where it stopped and re-rendering a clip takes seconds."""
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import traceback
 from pathlib import Path
 
 from . import captions, edit, ingest, reframe, render, select
-from .config import JOBS, load_settings
+from .config import ASPECTS, JOBS, LENGTHS, load_settings
 from .signals import Signals
-from .util import HookcutError, Timer, read_json, write_json
+from .util import EchoError, Timer, read_json, write_json
 
 STAGES = [
     ("info", "Read video"),
@@ -117,7 +117,69 @@ def _cfg(job: Job) -> dict:
         cfg["style"]["preset"] = o["preset"]
     if "cold_open" in o:
         cfg["edit"]["cold_open"] = bool(o["cold_open"])
+    if o.get("judge") == "agent":
+        cfg["llm"]["backend"] = "agent"
+    if o.get("length") in LENGTHS:
+        cfg["clips"]["min_len"], cfg["clips"]["max_len"] = LENGTHS[o["length"]]
+    if o.get("topic"):
+        cfg["clips"]["topic"] = o["topic"]
+    if o.get("aspect") in ASPECTS:
+        cfg["render"]["aspect"] = o["aspect"]
+    for k in ("sfx", "music", "logo", "watermark"):
+        if k in o and o[k] is not None:
+            cfg["style"][k] = o[k]
+    if o.get("language"):
+        cfg["language"] = o["language"]
     return cfg
+
+
+BRIEF = """# Echo judging brief
+
+You are judging clips for: "{title}" by {channel}
+
+Read the timestamped transcript below. Lines may carry audience tags:
+- <REPLAYED> = YouTube's Most replayed graph spikes here. Real viewers rewound this.
+- <COMMENTED xN> = N top comments quote this timestamp.
+Treat tags as strong evidence, but a tagged line still has to work as a standalone clip.
+
+{topic}Find about {cands} candidate clips, each {min_len}-{max_len} seconds, starting and ending on sentence boundaries,
+no two overlapping by more than 10 s.
+
+These are for Instagram Reels. Instagram's head has said the signals that matter most are watch time,
+sends per reach (people DMing the Reel to a friend) and likes per reach, with sends weighing most for
+reaching non-followers, and that original content is favored. So prefer moments that are rewatchable,
+that someone would send to a specific friend ("this is so you"), and that feel raw and real.
+
+Then score every candidate harshly, 0-10 each (a 7 is good, 9-10 is rare):
+- hook: do the first 3 seconds alone stop a stranger scrolling?
+- flow: complete arc, no missing context, no dead stretches
+- value: insight, emotion, humor or tension a viewer actually feels
+- share: would someone DM it to a specific friend, or argue in the comments? (Instagram's strongest reach signal)
+- loop: does the ending land so hard people rewatch?
+Skip intros, outros, sponsor reads, housekeeping and inside jokes.
+
+For each candidate also write:
+- hook_title: 3-7 words for the screen, specific and true, no emojis or hashtags
+- cold_open: an EXACT 4-14 word quote from inside the clip to tease first, or null
+- keywords: 2-4 single words to highlight in captions
+- ig_caption: under 150 characters. Start with a keyword-rich first line people would search for
+  (Instagram search reads captions), end with a question or a "send this to someone who..." line
+- hashtags: 3-5 niche hashtags (no #fyp #viral #reels)
+- why: one honest sentence
+
+{feedback}
+
+Write ONLY a JSON array to this exact file:
+{out}
+
+Format:
+[{{"start": 0.0, "end": 0.0, "hook": 0, "flow": 0, "value": 0, "share": 0, "loop": 0, "hook_title": "", "cold_open": null, "keywords": [], "ig_caption": "", "hashtags": [], "why": ""}}]
+
+Then run: echoclip finish {job} --detach
+
+TRANSCRIPT (times in seconds)
+{transcript}
+"""
 
 
 def run_job(job: Job) -> None:
@@ -155,7 +217,8 @@ def run_job(job: Job) -> None:
         job.stage("captions", "running")
         rough = read_json(job.dir / "rough_words.json")
         if not rough:
-            rough = ingest.fetch_captions(src, job.dir, cfg["language"]) if is_url else []
+            lang = cfg["language"] if cfg["language"] != "auto" else (info.get("language") or "en")
+            rough = ingest.fetch_captions(src, job.dir, lang) if is_url else []
             if not rough:
                 from .transcribe import transcribe_words
                 audio = Path(src)
@@ -164,7 +227,8 @@ def run_job(job: Job) -> None:
                     if not audio.exists():
                         from .util import run, ytdlp
                         run(ytdlp() + ["--no-playlist", "-f", "ba[ext=m4a]/ba", "-o", str(audio), src], timeout=900)
-                rough = transcribe_words(audio, cfg["whisper"]["rough_model"], cfg["language"])
+                rough = transcribe_words(audio, cfg["whisper"]["rough_model"],
+                                         None if cfg["language"] == "auto" else cfg["language"])
             write_json(job.dir / "rough_words.json", rough)
         lines = ingest.words_to_lines(rough)
         job.stage("captions", "done", t.secs())
@@ -178,7 +242,35 @@ def run_job(job: Job) -> None:
 
         # 3-4. scout + judge + fuse + pick
         clips = job.clips()
-        if not clips:
+        if not clips and cfg["llm"]["backend"] == "agent":
+            judged = read_json(job.dir / "judgments.json")
+            if not judged:
+                c = cfg["clips"]
+                transcript = "\n".join(f"[{l['s']:.1f}] {l['text']}{sig.line_tags(l['s'], l['e'])}" for l in lines)
+                topic = (f"The user only wants clips about: {c['topic']}. Ignore moments that are not about this.\n\n"
+                         if c.get("topic") else "")
+                (job.dir / "brief.md").write_text(BRIEF.format(
+                    topic=topic, title=info["title"], channel=info.get("channel") or "unknown", cands=c["candidates"],
+                    min_len=c["min_len"], max_len=c["max_len"], feedback=select._feedback_block(),
+                    out=str(job.dir / "judgments.json"), job=job.id, transcript=transcript), "utf-8")
+                job.stage("scout", "waiting")
+                job.update(state="awaiting_judge", stage="scout")
+                return
+            job.stage("scout", "done", 0)
+            t = Timer()
+            job.stage("judge", "running")
+            verdicts = []
+            for i, item in enumerate(judged):
+                try:
+                    v = select.Verdict(**{**item, "id": item.get("id") or f"k{i + 1:02d}"})
+                except (select.ValidationError, TypeError):
+                    continue
+                s_, e_ = select._snap(lines, v.start, v.end)
+                verdicts.append({**v.model_dump(), "start": s_, "end": e_, "hook_line": ""})
+            if not verdicts:
+                raise EchoError("judgments.json had no valid clips. Check its format against brief.md.")
+            ranked = select.fuse(verdicts, sig, cfg)
+        elif not clips:
             t = Timer()
             job.stage("scout", "running")
             cands = read_json(job.dir / "candidates.json")
@@ -186,12 +278,13 @@ def run_job(job: Job) -> None:
                 cands = select.scout(info, lines, sig, cfg)
                 write_json(job.dir / "candidates.json", cands)
             if not cands:
-                raise HookcutError("No usable moments found. Try a longer or more conversational video.")
+                raise EchoError("No usable moments found. Try a longer or more conversational video.")
             job.stage("scout", "done", t.secs())
 
             t = Timer()
             job.stage("judge", "running")
             ranked = select.fuse(select.judge(info, cands, rough, sig, cfg), sig, cfg)
+        if not clips:
             write_json(job.dir / "ranked.json", ranked)
             chosen = select.pick(ranked, cfg["clips"]["count"])
             clips = []
@@ -242,7 +335,8 @@ def prepare_clip(job: Job, cid: str, cfg: dict, info: dict) -> None:
     if not (d / "words.json").exists():
         job.patch_clip(cid, state="transcribing")
         from .transcribe import transcribe_words
-        write_json(d / "words.json", transcribe_words(seg, cfg["whisper"]["model"], cfg["language"]))
+        write_json(d / "words.json", transcribe_words(seg, cfg["whisper"]["model"],
+                                                      None if cfg["language"] == "auto" else cfg["language"]))
     if not (d / "layout.json").exists():
         job.patch_clip(cid, state="framing")
         write_json(d / "layout.json", reframe.analyze(seg))
@@ -263,7 +357,7 @@ def render_clip(job: Job, cid: str, cfg: dict | None = None) -> dict:
     st = cfg["style"]
     ass = captions.build_ass(plan["words"], plan["duration"], ov.get("preset") or st["preset"],
                              c.get("hook_title", "") if st["hook_title"] else "", st["hook_seconds"],
-                             st.get("watermark", ""))
+                             st.get("watermark", ""), size=ASPECTS.get(cfg["render"].get("aspect"), ASPECTS["9:16"]))
     write_json(d / "edit.json", plan)
     render.render(d / "source.mp4", plan, analysis, ass, d / f"{cid}.mp4", cfg)
     modes = sorted({s.get("mode") for s in analysis.get("shots", [])})

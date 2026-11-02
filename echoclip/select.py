@@ -91,7 +91,8 @@ def scout(info: dict, lines: list[dict], sig: Signals, cfg: dict) -> list[dict]:
     per = max(4, c["candidates"] // max(1, len(chunks)) + 2)
     for chunk in chunks:
         transcript = "\n".join(f"[{l['s']:.1f}] {l['text']}{sig.line_tags(l['s'], l['e'])}" for l in chunk)
-        p = _prompt("scout", TITLE=info["title"], CHANNEL=info.get("channel") or "unknown",
+        topic = f"The user only wants clips about: {c['topic']}.\n\n" if c.get("topic") else ""
+        p = _prompt("scout", TOPIC=topic, TITLE=info["title"], CHANNEL=info.get("channel") or "unknown",
                     RANGE=f"{ts(chunk[0]['s'])}-{ts(chunk[-1]['e'])}, times in seconds",
                     N=per, MIN=c["min_len"], MAX=c["max_len"], TRANSCRIPT=transcript)
         for item in llm.complete_json(p, cfg["llm"]) or []:

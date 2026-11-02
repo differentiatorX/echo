@@ -2,7 +2,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const main = $("#main");
 let poll = null;
 let META = { presets: {} };
-const prefs = { count: 4, preset: "hookcut", cold_open: true };
+const prefs = { count: 4, preset: "echo", cold_open: true };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (t) => { t = Math.max(0, Math.round(t || 0)); const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`; };
@@ -57,8 +57,8 @@ async function homeView() {
   const presets = Object.entries(META.presets);
   main.innerHTML = `
   <section class="hero">
-    <h1 class="sheen">Long video in.<br>The few Reels that hit out.</h1>
-    <p>Hookcut reads the transcript with Claude, checks it against what real viewers rewatched and quoted in the comments, and cuts only the clips worth posting.</p>
+    <h1>Long video in.<br>The few Reels that <em>echo</em>.</h1>
+    <p>Echo reads the transcript with Claude, checks it against what real viewers rewatched and quoted in the comments, and cuts only the clips worth posting.</p>
     <form class="dropbar" id="go">
       <input id="src" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link" aria-label="YouTube link" required>
       <span class="file btn ghost" title="Upload a video file">Upload
@@ -73,7 +73,14 @@ async function homeView() {
         ${presets.map(([k, p]) => `<button type="button" data-preset="${k}" aria-pressed="${prefs.preset === k}"><span class="swatch" style="background:${p.active}"></span> ${esc(p.label)}</button>`).join("")}
       </div></div>
       <label class="switch opt"><input type="checkbox" id="cold" ${prefs.cold_open ? "checked" : ""}> Cold open teaser</label>
+      <div class="opt">Length <div class="seg" role="group" aria-label="Clip length">
+        ${["short", "medium", "long"].map((n) => `<button type="button" data-len="${n}" aria-pressed="${(prefs.length || "medium") === n}">${n[0].toUpperCase() + n.slice(1)}</button>`).join("")}
+      </div></div>
+      <div class="opt">Format <div class="seg" role="group" aria-label="Aspect ratio">
+        ${["9:16", "4:5", "1:1"].map((n) => `<button type="button" data-aspect="${n}" aria-pressed="${(prefs.aspect || "9:16") === n}">${n}</button>`).join("")}
+      </div></div>
     </div>
+    <input id="topic" type="text" placeholder="Only clips about… (optional, e.g. money advice)" value="${esc(prefs.topic || "")}" style="margin-top:18px;max-width:520px" aria-label="Topic">
   </section>
   <section class="jobs" aria-labelledby="recent">
     <h2 id="recent">Recent videos</h2>
@@ -83,6 +90,9 @@ async function homeView() {
   main.querySelectorAll("[data-count]").forEach((b) => b.onclick = () => { prefs.count = +b.dataset.count; homeView(); });
   main.querySelectorAll("[data-preset]").forEach((b) => b.onclick = () => { prefs.preset = b.dataset.preset; homeView(); });
   $("#cold").onchange = (e) => prefs.cold_open = e.target.checked;
+  main.querySelectorAll("[data-len]").forEach((b) => b.onclick = () => { prefs.length = b.dataset.len; homeView(); });
+  main.querySelectorAll("[data-aspect]").forEach((b) => b.onclick = () => { prefs.aspect = b.dataset.aspect; homeView(); });
+  $("#topic").oninput = (e) => prefs.topic = e.target.value;
   const bar = $("#go");
   ["dragenter", "dragover"].forEach((ev) => bar.addEventListener(ev, (e) => { e.preventDefault(); bar.classList.add("drag"); }));
   ["dragleave", "drop"].forEach((ev) => bar.addEventListener(ev, () => bar.classList.remove("drag")));
@@ -93,7 +103,7 @@ async function homeView() {
 }
 
 function jobRow(j, i = 0) {
-  const label = { queued: "Waiting", running: "Working", done: `${j.clip_count} clips`, error: "Failed" }[j.state] || j.state;
+  const label = { queued: "Waiting", running: "Working", awaiting_judge: "Waiting for your agent", done: `${j.clip_count} clips`, error: "Failed" }[j.state] || j.state;
   return `<li style="--i:${i}"><a href="#/job/${encodeURIComponent(j.id)}">
     ${j.thumbnail ? `<img src="${esc(j.thumbnail)}" alt="" loading="lazy">` : `<span class="ph"></span>`}
     <span><span class="t">${esc(j.title)}</span><br><span class="s">${esc(j.channel || "")}${j.channel ? ", " : ""}${ago(j.created)}${j.best ? `, best score ${Math.round(j.best)}` : ""}</span></span>
@@ -103,7 +113,7 @@ function jobRow(j, i = 0) {
 async function start(source) {
   if (!source) return;
   try {
-    const job = await api("/api/jobs", { method: "POST", body: { source, count: prefs.count, preset: prefs.preset, cold_open: prefs.cold_open } });
+    const job = await api("/api/jobs", { method: "POST", body: { source, count: prefs.count, preset: prefs.preset, cold_open: prefs.cold_open, length: prefs.length || "medium", aspect: prefs.aspect || "9:16", topic: prefs.topic || "" } });
     location.hash = `#/job/${job.id}`;
   } catch (e) { toast(e.message); }
 }
@@ -148,6 +158,7 @@ function signalText(job) {
 
 function waitingHTML(job) {
   if (job.state === "error") return "";
+  if (job.state === "awaiting_judge") return `<p class="empty">Waiting for your AI agent to judge this video. It reads brief.md in the job folder, then runs <code>echoclip finish ${esc(job.id)}</code>.</p>`;
   return `<p class="empty">Claude is reading the video. Clips land here as soon as they're judged.</p>`;
 }
 
@@ -174,10 +185,10 @@ function mapSVG(job) {
   const picks = job.clips.map((c) => `<rect class="pick" style="--i:${c.rank}" data-jump="${c.id}" x="${x(c.start)}" y="${top - 8}" width="${Math.max(4, x(c.end) - x(c.start))}" height="${H - top - 12}" rx="4"><title>${esc(c.hook_title)}</title></rect>`).join("");
   const labels = job.clips.map((c) => `<span class="map-rank" style="left:${(c.start / D) * 100}%;--i:${c.rank}">${c.rank}</span>`).join("");
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${fmt(f * D)}</span>`).join("");
-  const note = hm.length ? "The glowing curve is YouTube's Most replayed data. Blue windows are your clips, dashed ones were judged and dropped." : "This video has no replay curve yet, so ranking leans on Claude's judgment and comments. Blue windows are your clips.";
+  const note = hm.length ? "The line is YouTube's Most replayed data. Electric windows are your clips, dashed ones were judged and dropped." : "This video has no replay curve yet, so ranking leans on Claude's judgment and comments. Electric windows are your clips.";
   return `<div class="map-head"><h2>Replay map</h2><p>${note}</p></div>
   <div class="map-plot">${labels}<span class="playhead" aria-hidden="true"></span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Video timeline with replay intensity and selected clips">
-    <defs><linearGradient id="heatfill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4FD1FF" stop-opacity=".45"/><stop offset="1" stop-color="#2F6BFF" stop-opacity="0"/></linearGradient><linearGradient id="heatline" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#2F6BFF"/><stop offset=".5" stop-color="#4FD1FF"/><stop offset="1" stop-color="#2F6BFF"/></linearGradient></defs>
+    <defs><linearGradient id="heatfill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2F8BFF" stop-opacity=".32"/><stop offset="1" stop-color="#2F8BFF" stop-opacity="0"/></linearGradient><linearGradient id="heatline" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#1673D6"/><stop offset=".5" stop-color="#48B4F0"/><stop offset="1" stop-color="#1673D6"/></linearGradient></defs>
     <line class="base" x1="0" x2="${W}" y1="${H - 20}" y2="${H - 20}" vector-effect="non-scaling-stroke"/>${curve}${cands}${picks}</svg></div><div class="map-axis">${ticks}</div>`;
 }
 
@@ -300,7 +311,7 @@ async function openEditor(jobId, c) {
 async function queueView() {
   const { queue, posted } = await api("/api/queue");
   main.innerHTML = `<h1 style="font-size:clamp(36px,5vw,64px)">Posting</h1>
-  <p class="muted" style="max-width:640px">Approve clips, line them up here, and let your scheduler post one at a time with <code>hookcut post-next</code>. Posting 1 to 2 Reels a day at the same times beats dumping five at once.</p>
+  <p class="muted" style="max-width:640px">Approve clips, line them up here, and let your scheduler post one at a time with <code>echoclip post-next</code>. Posting 1 to 2 Reels a day at the same times beats dumping five at once.</p>
   <div class="grid2">
     <section class="card"><h2>Up next</h2>
       ${queue.length ? queue.map((q, i) => `<div class="qitem"><img src="/media/${q.job}/${q.cover}" alt=""><div><b>${esc(q.hook_title)}</b><br><span class="muted small">Score ${Math.round(q.score || 0)}${i === 0 ? ", posts next" : ""}</span></div>
@@ -329,6 +340,9 @@ async function settingsView() {
       <div class="field"><label for="mn">Clip length (seconds)</label><div class="row"><input id="mn" type="number" min="10" max="85" data-k="clips.min_len" value="${v("clips.min_len")}" style="width:96px"> to <input type="number" min="15" max="90" data-k="clips.max_len" value="${v("clips.max_len")}" aria-label="Maximum length" style="width:96px"></div></div>
       <label class="switch field"><input type="checkbox" data-k="style.progress_bar" ${v("style.progress_bar") ? "checked" : ""}> Progress bar</label>
       <label class="switch field"><input type="checkbox" data-k="edit.remove_fillers" ${v("edit.remove_fillers") ? "checked" : ""}> Remove um and uh</label>
+      <label class="switch field"><input type="checkbox" data-k="style.sfx" ${v("style.sfx") ? "checked" : ""}> Sound effects (whoosh on the teaser cut, pops on keywords)</label>
+      <div class="field"><label for="mus">Background music</label><input id="mus" type="text" data-k="style.music" value="${esc(v("style.music"))}" placeholder="C:\\Users\\you\\Music\\echo"><small>A song or a folder of songs you have rights to. It ducks automatically when someone talks.</small></div>
+      <div class="field"><label for="lg">Logo</label><input id="lg" type="text" data-k="style.logo" value="${esc(v("style.logo"))}" placeholder="C:\\Users\\you\\logo.png"><small>A PNG shown small in the top-right corner, inside Instagram's safe zone.</small></div>
       <div class="field"><label for="llm">Clip judge</label><select id="llm" data-k="llm.backend"><option value="claude-code" ${v("llm.backend") === "claude-code" ? "selected" : ""}>Claude Code (your subscription)</option><option value="api" ${v("llm.backend") === "api" ? "selected" : ""}>Anthropic API key</option></select></div>
       <button class="btn primary">Save settings</button></form>
     <form class="card" id="ig"><h2>Instagram</h2>

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 
-class HookcutError(RuntimeError):
+class EchoError(RuntimeError):
     pass
 
 
@@ -17,12 +17,12 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int | None = None, inp
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
                            input=input, encoding="utf-8", errors="replace")
     except FileNotFoundError as e:
-        raise HookcutError(f"Command not found: {cmd[0]}. Run `hookcut doctor`.") from e
+        raise EchoError(f"Command not found: {cmd[0]}. Run `echoclip doctor`.") from e
     except subprocess.TimeoutExpired as e:
-        raise HookcutError(f"Timed out after {timeout}s: {' '.join(cmd[:3])}") from e
+        raise EchoError(f"Timed out after {timeout}s: {' '.join(cmd[:3])}") from e
     if p.returncode != 0:
         tail = (p.stderr or p.stdout or "").strip().splitlines()[-12:]
-        raise HookcutError(f"{Path(cmd[0]).name} failed:\n" + "\n".join(tail))
+        raise EchoError(f"{Path(cmd[0]).name} failed:\n" + "\n".join(tail))
     return p.stdout
 
 

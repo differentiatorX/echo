@@ -9,7 +9,7 @@ from pathlib import Path
 import requests
 
 from .config import FEEDBACK, JOBS, POSTED_PATH, QUEUE_PATH, load_settings
-from .util import HookcutError, read_json, write_json
+from .util import EchoError, read_json, write_json
 
 
 def _caption(clip: dict) -> str:
@@ -24,18 +24,18 @@ def _check(r: requests.Response) -> dict:
         data = {"raw": r.text[:300]}
     if r.status_code >= 400 or "error" in data:
         msg = data.get("error", {}).get("message") if isinstance(data.get("error"), dict) else data
-        raise HookcutError(f"Instagram API: {msg}")
+        raise EchoError(f"Instagram API: {msg}")
     return data
 
 
 def publish_clip(job_id: str, cid: str, trial: bool | None = None) -> dict:
     cfg = load_settings()["publish"]
     if not cfg["ig_user_id"] or not cfg["access_token"]:
-        raise HookcutError("Add your Instagram user ID and access token in Settings first.")
+        raise EchoError("Add your Instagram user ID and access token in Settings first.")
     clips = read_json(JOBS / job_id / "clips.json", []) or []
     clip = next((c for c in clips if c["id"] == cid), None)
     if not clip or clip.get("state") != "ready":
-        raise HookcutError("Clip isn't rendered yet.")
+        raise EchoError("Clip isn't rendered yet.")
     video = JOBS / job_id / cid / f"{cid}.mp4"
     ver, ig, tok = cfg["api_version"], cfg["ig_user_id"], cfg["access_token"]
     trial = cfg["trial"] if trial is None else trial
@@ -47,7 +47,7 @@ def publish_clip(job_id: str, cid: str, trial: bool | None = None) -> dict:
 
     if cfg["mode"] == "instagram":
         if not cfg["public_base_url"]:
-            raise HookcutError("Instagram Login mode needs a public URL for the video (see README: tunnels).")
+            raise EchoError("Instagram Login mode needs a public URL for the video (see README: tunnels).")
         host = "https://graph.instagram.com"
         params["video_url"] = f"{cfg['public_base_url'].rstrip('/')}/media/{job_id}/{cid}/{cid}.mp4"
         cont = _check(requests.post(f"{host}/{ver}/{ig}/media", data=params,
@@ -69,7 +69,7 @@ def publish_clip(job_id: str, cid: str, trial: bool | None = None) -> dict:
         if st.get("status_code") == "FINISHED":
             break
         if st.get("status_code") in ("ERROR", "EXPIRED"):
-            raise HookcutError(f"Instagram processing failed: {st}")
+            raise EchoError(f"Instagram processing failed: {st}")
         time.sleep(15)
     pub = _check(requests.post(f"{host}/{ver}/{ig}/media_publish", data={"creation_id": cid_},
                                headers={"Authorization": f"Bearer {tok}"}, timeout=60))
@@ -82,7 +82,7 @@ def publish_clip(job_id: str, cid: str, trial: bool | None = None) -> dict:
     return posted[-1]
 
 
-# ---------- queue (drain with cron / Task Scheduler: `hookcut post-next`) ----------
+# ---------- queue (drain with cron / Task Scheduler: `echoclip post-next`) ----------
 
 def queue() -> list[dict]:
     return read_json(QUEUE_PATH, []) or []

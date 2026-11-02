@@ -18,7 +18,7 @@ from .doctor import checks
 from .pipeline import Job, list_jobs, render_clip, run_job
 from .util import read_json
 
-app = FastAPI(title="Hookcut", version=__version__)
+app = FastAPI(title="Echo", version=__version__)
 _tasks: "queue.Queue[tuple]" = queue.Queue()
 
 
@@ -80,7 +80,8 @@ def create_job(body: dict = Body(...)):
         raise HTTPException(400, "Paste a YouTube link or upload a video.")
     if not source.startswith(("http://", "https://")) and not Path(source).exists():
         raise HTTPException(400, "That file doesn't exist on this machine.")
-    opts = {k: body[k] for k in ("count", "min_len", "max_len", "preset", "cold_open") if k in body}
+    opts = {k: body[k] for k in ("count", "min_len", "max_len", "preset", "cold_open", "length", "aspect", "topic")
+            if k in body and body[k] not in ("", None)}
     job = Job.create(source, opts)
     _tasks.put(("job", (job.id,)))
     return job.status()

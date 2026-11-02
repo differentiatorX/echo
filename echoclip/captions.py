@@ -4,15 +4,21 @@ from __future__ import annotations
 import re
 
 PRESETS: dict[str, dict] = {
-    "hookcut": {"label": "Hookcut", "font": "Anton", "size": 118, "color": "#FFFFFF", "active": "#4FB8FF",
-                "keyword": "#FFD98A", "outline": 7, "shadow": 3, "words": 3, "chars": 18, "y": 0.64,
+    "echo": {"label": "Echo", "font": "Anton", "size": 118, "color": "#FFFFFF", "active": "#48B4F0",
+                "keyword": "#2F8BFF", "outline": 7, "shadow": 3, "words": 3, "chars": 18, "y": 0.64,
                 "upper": True, "pop": True, "karaoke": False},
-    "beast": {"label": "Beast", "font": "Anton", "size": 122, "color": "#FFFFFF", "active": "#4BE36A",
-              "keyword": "#FFE14D", "outline": 9, "shadow": 4, "words": 2, "chars": 14, "y": 0.62,
+    "beast": {"label": "Beast", "font": "Anton", "size": 122, "color": "#FFFFFF", "active": "#48B4F0",
+              "keyword": "#2F8BFF", "outline": 9, "shadow": 4, "words": 2, "chars": 14, "y": 0.62,
               "upper": True, "pop": True, "karaoke": False},
-    "karaoke": {"label": "Karaoke", "font": "Anton", "size": 94, "color": "#FFFFFF", "active": "#4FB8FF",
-                "keyword": "#4FB8FF", "outline": 6, "shadow": 2, "words": 4, "chars": 22, "y": 0.66,
+    "karaoke": {"label": "Karaoke", "font": "Anton", "size": 94, "color": "#FFFFFF", "active": "#48B4F0",
+                "keyword": "#48B4F0", "outline": 6, "shadow": 2, "words": 4, "chars": 22, "y": 0.66,
                 "upper": True, "pop": False, "karaoke": True},
+    "solo": {"label": "Solo", "font": "Anton", "size": 150, "color": "#FFFFFF", "active": "#48B4F0",
+             "keyword": "#2F8BFF", "outline": 10, "shadow": 4, "words": 1, "chars": 12, "y": 0.60,
+             "upper": True, "pop": True, "karaoke": False},
+    "neon": {"label": "Neon", "font": "Anton", "size": 112, "color": "#EAF4FF", "active": "#FFFFFF",
+             "keyword": "#48B4F0", "outline": 4, "shadow": 0, "words": 3, "chars": 18, "y": 0.64,
+             "upper": True, "pop": True, "karaoke": False, "glow": "#1E7BFF"},
     "minimal": {"label": "Minimal", "font": "Anton", "size": 76, "color": "#FFFFFF", "active": "#FFFFFF",
                 "keyword": "#FFFFFF", "outline": 5, "shadow": 0, "words": 4, "chars": 24, "y": 0.70,
                 "upper": False, "pop": False, "karaoke": False},
@@ -70,11 +76,15 @@ def _wrap(text: str, width: int = 20) -> str:
     return "\\N".join(lines[:3])
 
 
-def build_ass(words: list[dict], duration: float, preset: str = "hookcut", hook_title: str = "",
-              hook_seconds: float = 2.6, watermark: str = "") -> str:
-    p = PRESETS.get(preset, PRESETS["hookcut"])
-    W, H = 1080, 1920
+def build_ass(words: list[dict], duration: float, preset: str = "echo", hook_title: str = "",
+              hook_seconds: float = 2.6, watermark: str = "", size: tuple[int, int] = (1080, 1920)) -> str:
+    """Instagram safe zones: captions sit mid-low and nudged left of the like/comment/share rail,
+    the hook sits below the top bar, the watermark sits above the bottom caption area."""
+    p = PRESETS.get(preset, PRESETS["echo"])
+    W, H = size
+    k = H / 1920
     y = int(H * p["y"])
+    cx = int(W * 0.47)
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -84,8 +94,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{p['font']},{p['size']},{ass_color(p['color'])},{ass_color(p['color'])},{ass_color('#000000')},{ass_color('#000000', 0x60)},0,0,0,0,100,100,1,0,1,{p['outline']},{p['shadow']},5,60,60,0,1
-Style: Hook,{p['font']},76,{ass_color('#FFFFFF')},{ass_color('#FFFFFF')},{ass_color('#2F6BFF')},{ass_color('#2F6BFF')},0,0,0,0,100,100,0.5,0,3,18,0,8,80,80,0,1
+Style: Cap,{p['font']},{int(p['size'] * max(k, .72))},{ass_color(p['color'])},{ass_color(p['color'])},{ass_color(p.get('glow', '#000000'))},{ass_color('#000000', 0x60)},0,0,0,0,100,100,1,0,1,{p['outline']},{p['shadow']},5,60,140,0,1
+Style: Hook,{p['font']},76,{ass_color('#FFFFFF')},{ass_color('#FFFFFF')},{ass_color('#1673D6')},{ass_color('#1673D6')},0,0,0,0,100,100,0.5,0,3,18,0,8,80,80,0,1
 Style: Mark,{p['font']},38,{ass_color('#FFFFFF', 0x50)},{ass_color('#FFFFFF')},{ass_color('#000000', 0x80)},{ass_color('#000000', 0x80)},0,0,0,0,100,100,1,0,1,2,0,2,40,40,0,1
 
 [Events]
@@ -114,14 +124,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     parts.append("{" + _tag_color(p["keyword"]) + "}" + text + "{\\r}")
                 else:
                     parts.append(text)
-            pre = f"{{\\an5\\pos({W // 2},{y})"
+            pre = f"{{\\an5\\pos({cx},{y})" + ("\\blur4" if p.get("glow") else "")
             if p["pop"] and k == 0:
                 pre += "\\fscx78\\fscy78\\t(0,90,\\fscx106\\fscy106)\\t(90,160,\\fscx100\\fscy100)"
             pre += "}"
             ev.append(f"Dialogue: 1,{_t(s)},{_t(e)},Cap,,0,0,0,,{pre}{' '.join(parts)}")
     if hook_title:
         ev.append(f"Dialogue: 2,{_t(0)},{_t(min(hook_seconds, duration))},Hook,,0,0,0,,"
-                  f"{{\\an8\\pos({W // 2},250)\\fad(80,180)}}{_wrap(_esc(hook_title.upper()))}")
+                  f"{{\\an8\\pos({W // 2},{int(300 * k)})\\fad(80,180)}}{_wrap(_esc(hook_title.upper()))}")
     if watermark:
-        ev.append(f"Dialogue: 0,{_t(0)},{_t(duration)},Mark,,0,0,0,,{{\\an2\\pos({W // 2},1800)}}{_esc(watermark)}")
+        ev.append(f"Dialogue: 0,{_t(0)},{_t(duration)},Mark,,0,0,0,,{{\\an8\\pos({cx},{int(H * 0.775)})}}{_esc(watermark)}")
     return head + "\n".join(ev) + "\n"

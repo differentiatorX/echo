@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from .util import HookcutError, probe, run, ytdlp
+from .util import EchoError, probe, run, ytdlp
 
 FILLERS = {"um", "uh", "uhm", "umm", "erm", "er", "ah", "hmm", "mm", "mhm"}
 
@@ -79,7 +79,7 @@ def fetch_captions(url: str, workdir: Path, lang: str = "en") -> list[dict]:
         run(ytdlp() + ["--skip-download", "--no-playlist", "--write-subs", "--write-auto-subs",
                        "--sub-langs", f"{lang}-orig,{lang},{lang}.*", "--sub-format", "json3",
                        "-o", str(subdir / "%(id)s.%(ext)s"), url], timeout=120)
-    except HookcutError:
+    except EchoError:
         return []
     files = sorted(subdir.glob("*.json3"))
     if not files:
@@ -116,7 +116,7 @@ def download_section(url: str, start: float, end: float, out: Path) -> Path:
     if not out.exists():
         cands = sorted(out.parent.glob(out.stem + "*"))
         if not cands:
-            raise HookcutError(f"Download produced no file for {start:.1f}-{end:.1f}s")
+            raise EchoError(f"Download produced no file for {start:.1f}-{end:.1f}s")
         cands[0].rename(out)
     return out
 
