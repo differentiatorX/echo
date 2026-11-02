@@ -157,6 +157,31 @@ Every clip gets an `instagram_check` that flags a late start, a missing hook, no
 
 <img src="docs/readme/divider.svg" width="100%" alt="">
 
+## Time and tokens
+
+Echo sends your AI the transcript, never the video, so tokens grow with how long people talk, not with file size. These are typical figures for 4 Reels from a talking video. The website has a live calculator.
+
+| Video length | AI agent + review (GPU) | Studio, quick (GPU) | Without a GPU |
+|:--|:--|:--|:--|
+| 30 min | 5-11 min, about 42-66k tokens | 4-8 min, about 14-23k tokens | add 6-10 min |
+| 1 hour | 6-11 min, about 48-75k tokens | 5-8 min, about 20-32k tokens | add 6-10 min |
+| 2 hours | 7-12 min, about 60-94k tokens | 6-9 min, about 32-51k tokens | add 6-10 min |
+
+Where the tokens go in agent mode:
+
+| Step | Tokens |
+|:--|:--|
+| Judging brief: transcript, replay and comment tags, rules | about 250 per minute of video, plus 1k |
+| Writing the picks | about 2.5k |
+| Reviewing each clip: words, Instagram checks, 3 frames, one fix | about 5k per clip |
+| Tool calls and replies | about 1k each |
+
+Other things that affect the numbers:
+- **First run:** on a new computer, Echo also downloads the speech model once, which takes a few minutes.
+- **On a Claude plan:** tokens count toward your usage limits; they don't cost money per run.
+- **Agent overhead:** agents re-read earlier steps as they work, so your app's meter can show more than the content Echo sends.
+- **Saving tokens:** for the cheapest runs, use the studio's quick mode, or ask your agent to skip the frame review.
+
 ## Five minutes, start to finish
 
 <img src="docs/readme/pipeline.svg" alt="Prepare, judge, cut, render, review" width="100%">

@@ -250,6 +250,25 @@ h2.in .w>span{transform:none}
 .sign span{position:relative;display:inline-block}
 .sign span::before,.sign span::after{content:"echo";position:absolute;left:0;top:0;-webkit-text-stroke:1px rgba(72,180,240,.35);color:transparent;animation:wordecho 4s var(--ease) infinite;opacity:0}
 .sign span::after{animation-delay:2s}
+
+/* cost estimator */
+.est{display:grid;grid-template-columns:1fr 1.1fr;gap:clamp(20px,4vw,48px);margin-top:44px;padding:clamp(22px,3vw,34px);border:1px solid var(--line);border-radius:26px;background:rgba(10,16,34,.6)}
+.ctl{margin-bottom:26px}.ctl label,.ctl .lbl{display:flex;justify-content:space-between;font-weight:500;margin-bottom:12px;color:var(--ink)}
+.ctl b{font:400 26px/1 var(--serif);color:var(--ice)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:6px;background:linear-gradient(90deg,#1673D6,#48B4F0) 0/var(--p,50%) 100% no-repeat,rgba(255,255,255,.08);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#EAF4FF;box-shadow:0 0 0 5px rgba(72,180,240,.25),0 0 18px rgba(30,123,255,.8);cursor:pointer;transition:transform .3s var(--spring)}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border:0;border-radius:50%;background:#EAF4FF;box-shadow:0 0 18px rgba(30,123,255,.8);cursor:pointer}
+.pills{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:999px;background:#070B18}
+.pills button{border:0;background:transparent;color:var(--soft);font:inherit;font-size:14px;padding:8px 14px;border-radius:999px;cursor:pointer;transition:all .35s var(--ease)}
+.pills button[aria-pressed="true"]{background:linear-gradient(135deg,#1673D6,#2F8BFF);color:#fff;box-shadow:0 0 18px -4px rgba(30,123,255,.8)}
+.est-out{display:flex;flex-direction:column}
+.big{display:flex;align-items:baseline;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--line)}
+.big .k{color:var(--soft)}.big .v{font:400 clamp(40px,5vw,58px)/1 var(--serif);background:linear-gradient(90deg,#EAF4FF,#48B4F0);-webkit-background-clip:text;background-clip:text;color:transparent;transition:opacity .25s var(--ease)}
+.parts{list-style:none;padding:0;margin:18px 0 0}.parts li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;color:var(--soft);font-size:15px;border-bottom:1px dashed rgba(72,180,240,.12)}
+.parts li b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fine{color:var(--soft);font-size:13px;margin:18px 0 0;line-height:1.55}
+@media (max-width:960px){.est{grid-template-columns:1fr}}
 /* fiber burst */
 .burst{position:absolute;right:-8%;top:40px;width:min(900px,90vw);aspect-ratio:1;z-index:-1;pointer-events:none;opacity:.9;mask-image:radial-gradient(circle,#000 35%,transparent 70%)}
 .burst svg{width:100%;height:100%;animation:spinb 140s linear infinite}
@@ -271,7 +290,7 @@ h2.in .w>span{transform:none}
 <header id="top"><div class="wrap nav">
   <a class="brand" href="#" aria-label="Echo home"><svg class="mk" viewBox="0 0 32 32" aria-hidden="true"><path class="s" d="M14 9v14l11-7z" transform="translate(-9 0)" opacity=".22"/><path class="s" d="M14 9v14l11-7z" transform="translate(-4.5 0)" opacity=".5"/><path class="g g2" d="M14 9v14l11-7z"/><path class="g g1" d="M14 9v14l11-7z"/><path class="f" d="M14 9v14l11-7z"/></svg>echo</a>
   <nav class="links" aria-label="Sections">
-    <a href="#agents">Agents</a><a href="#ranking">Ranking</a><a href="#install">Install</a><a href="#credits">Credits</a>
+    <a href="#agents">Agents</a><a href="#cost">Cost</a><a href="#ranking">Ranking</a><a href="#install">Install</a><a href="#credits">Credits</a>
     <a class="btn sm" href="https://github.com/differentiatorX/echo"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>GitHub</a>
   </nav>
 </div></header>
@@ -334,6 +353,28 @@ h2.in .w>span{transform:none}
       <div class="r rv" style="--i:2"><div><h3>Comment buzz</h3><p>Top comments quoting a timestamp.</p></div><div class="track"><i style="--w:17%;--i:2"></i></div><div class="pct" data-count="10">0%</div></div>
       <div class="r rv" style="--i:3"><div><h3>Pace</h3><p>Speaking energy vs the rest of the video.</p></div><div class="track"><i style="--w:8%;--i:3"></i></div><div class="pct" data-count="5">0%</div></div>
       <div class="r rv" style="--i:4"><div><h3>Your results</h3><p>Instagram stats feed back every week.</p></div><div class="track"><i class="p" style="--w:100%;--i:4"></i></div><div class="pct" style="font-size:18px">always</div></div>
+    </div>
+  </section>
+
+  <section id="cost" aria-labelledby="s7">
+    <p class="eyebrow rv">Time and tokens</p>
+    <h2 id="s7" class="rv">Know the cost before you hit go.</h2>
+    <p class="intro rv">Echo only sends your AI the transcript, never the video, so tokens grow with how long people talk, not with file size. Slide to your video and see what a run takes.</p>
+    <div class="est rv">
+      <div class="est-in">
+        <div class="ctl"><label for="e-len">Video length <b id="e-len-v">60 min</b></label><input type="range" id="e-len" min="10" max="180" step="5" value="60"></div>
+        <div class="ctl"><label for="e-clips">Reels <b id="e-clips-v">4</b></label><input type="range" id="e-clips" min="3" max="5" step="1" value="4"></div>
+        <div class="ctl"><span class="lbl">How you run it</span><div class="pills" role="group" aria-label="Mode">
+          <button type="button" data-mode="agent" aria-pressed="true">AI agent + review</button><button type="button" data-mode="studio" aria-pressed="false">Studio, quick</button></div></div>
+        <div class="ctl"><span class="lbl">Your computer</span><div class="pills" role="group" aria-label="Hardware">
+          <button type="button" data-hw="gpu" aria-pressed="true">NVIDIA GPU</button><button type="button" data-hw="cpu" aria-pressed="false">No GPU</button></div></div>
+      </div>
+      <div class="est-out">
+        <div class="big"><span class="k">Time</span><span class="v" id="e-time">6-9 min</span></div>
+        <div class="big"><span class="k">Tokens</span><span class="v" id="e-tok">50-75k</span></div>
+        <ul class="parts" id="e-parts"></ul>
+        <p class="fine">Estimates for a typical talking video. The first run on a new computer also downloads the speech model once (a few minutes). On a Claude plan, tokens count toward your usage limits rather than costing money per run. Agents re-read earlier steps as they work, so your app's own meter can show more than the content Echo sends.</p>
+      </div>
     </div>
   </section>
 
@@ -511,6 +552,46 @@ function countTo(el) {
   requestAnimationFrame(f);
 }
 
+
+// time & token estimator (same formulas as the README table)
+(function est() {
+  const len = document.getElementById("e-len"), clips = document.getElementById("e-clips");
+  if (!len) return;
+  let mode = "agent", hw = "gpu";
+  const k = (n) => n >= 1000 ? Math.round(n / 1000) + "k" : String(Math.round(n));
+  const range = (a, b, u) => `${a}-${b}${u}`;
+  function calc() {
+    const m = +len.value, c = +clips.value;
+    document.getElementById("e-len-v").textContent = m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : `${m} min`;
+    document.getElementById("e-clips-v").textContent = c;
+    [len, clips].forEach((el) => el.style.setProperty("--p", ((el.value - el.min) / (el.max - el.min)) * 100 + "%"));
+    const brief = 250 * m + 1200;                       // transcript + tags + rules
+    const judgeOut = 2500;
+    const review = c * 5000;                            // words, checks, 3 frames, a fix
+    const overhead = 1000 * (8 + c * 3);                // tool calls and replies
+    const tokAgent = brief + judgeOut + review + 1500 + overhead;
+    const tokStudio = 250 * m + 10500;                  // scout + judge, no review
+    const tok = mode === "agent" ? tokAgent : tokStudio;
+    const prep = 0.5 + m / 120, judge = mode === "agent" ? 1 + m / 120 : 0.8 + m / 150;
+    const perClip = hw === "gpu" ? [0.6, 1.1] : [2.2, 3.6];
+    const reviewMin = mode === "agent" ? [1, 3] : [0, 0];
+    const lo = prep + judge + c * perClip[0] + reviewMin[0], hi = prep + judge + 1.5 + c * perClip[1] + reviewMin[1];
+    const t = document.getElementById("e-time"), to = document.getElementById("e-tok");
+    t.textContent = range(Math.max(2, Math.round(lo)), Math.round(hi), " min");
+    to.textContent = `${Math.round(tok * 0.8 / 1000)}-${Math.round(tok * 1.25 / 1000)}k`;
+    const parts = [
+      ["Read the video (captions, replays, comments)", prep < 1 ? "under 1 min" : range(1, Math.ceil(prep + 0.5), " min")],
+      [mode === "agent" ? "Your agent judges the moments" : "Claude judges the moments", `~${k(mode === "agent" ? brief + judgeOut : tokStudio)} tokens`],
+      [`Cut and render ${c} clips (${hw === "gpu" ? "GPU" : "CPU"})`, range(Math.round(c * perClip[0]), Math.round(c * perClip[1] + 1), " min")],
+      ...(mode === "agent" ? [["Review and fix every clip", `~${k(review + overhead)} tokens`]] : []),
+    ];
+    document.getElementById("e-parts").innerHTML = parts.map(([a, b]) => `<li>${a}<b>${b}</b></li>`).join("");
+  }
+  len.oninput = calc; clips.oninput = calc;
+  document.querySelectorAll("[data-mode]").forEach((b) => b.onclick = () => { mode = b.dataset.mode; document.querySelectorAll("[data-mode]").forEach((x) => x.setAttribute("aria-pressed", x === b)); calc(); });
+  document.querySelectorAll("[data-hw]").forEach((b) => b.onclick = () => { hw = b.dataset.hw; document.querySelectorAll("[data-hw]").forEach((x) => x.setAttribute("aria-pressed", x === b)); calc(); });
+  calc();
+})();
 const SCRIPT = [["MOST", "PEOPLE", "QUIT"], ["ONE", "WEEK", "BEFORE"], ["IT", "STARTS", "WORKING."], ["THEN", "ONE", "VIDEO"], ["DID", "A", "MILLION"], ["VIEWS", "OVERNIGHT."]];
 const KEY = new Set(["QUIT", "MILLION", "OVERNIGHT."]);
 const cap = document.getElementById("cap"), hook = document.getElementById("hookbox"), bar = document.getElementById("pbar"), scene = document.getElementById("scene");
