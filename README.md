@@ -268,7 +268,7 @@ Mathematics and Computing at Delhi Technological University, class of 2029. Full
 
 <a href="https://github.com/differentiatorX"><img src="https://img.shields.io/badge/GitHub-differentiatorX-2F6BFF?style=flat-square&logo=github&labelColor=0B1433" alt="GitHub"></a>
 <a href="https://linkedin.com/in/differentiatorx"><img src="https://img.shields.io/badge/LinkedIn-differentiatorx-2F6BFF?style=flat-square&logo=linkedin&labelColor=0B1433" alt="LinkedIn"></a>
-<a href="https://www.instagram.com/madhurdristi"><img src="https://img.shields.io/badge/Instagram-madhurdristi-2F6BFF?style=flat-square&logo=instagram&labelColor=0B1433" alt="Instagram"></a>
+<a href="https://www.instagram.com/madhurdrishti"><img src="https://img.shields.io/badge/Instagram-madhurdrishti-2F6BFF?style=flat-square&logo=instagram&labelColor=0B1433" alt="Instagram"></a>
 
 </td>
 </tr>
