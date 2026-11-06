@@ -137,7 +137,7 @@ Every clip gets an `instagram_check` that flags a late start, a missing hook, no
 | AI clip picking with a virality score | yes, plus real replay and comment data |
 | Prompt-based clipping ("only clips about money") | `--topic` |
 | Clip length presets | short 15-30 s, medium 25-55 s, long 45-90 s |
-| Auto reframe with face tracking | per-shot face crop, split screen for two speakers, blur fill for screen recordings |
+| Reframing | your agent directs every shot like an editor: fill, wide or split, focus, zoom, push-ins and punch-ins timed to the moment, with smooth subject tracking as the fallback |
 | Aspect ratios | 9:16 Reels, 4:5 feed, 1:1 |
 | Animated captions | 6 styles: Echo, Beast, Solo, Neon, Karaoke, Minimal, with keyword highlights |
 | Hook titles, captions and hashtags | written for every clip |
@@ -200,6 +200,8 @@ Echo never downloads or transcribes the whole video first. It reads YouTube's ca
 | `echoclip finish <job> --detach` | Cut and render in the background |
 | `echoclip status <job>` | Progress as JSON |
 | `echoclip clips <job>` | Clips as JSON with words, captions, paths and Instagram checks |
+| `echoclip shots <job> <clip>` | Contact sheets of every shot for the agent to study |
+| `echoclip direct <job> <clip> '[...]'` | Direct the camera per shot: fill, wide or split, focus, zoom, push-ins and punch-ins |
 | `echoclip frames <job> <clip>` | Opening, middle and ending frames |
 | `echoclip fix <job> <clip> --start-at 12 --hook "..." --style solo` | Fix and re-render one clip |
 | `echoclip cover <job> <clip>` | Grid-safe cover image |

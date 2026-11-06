@@ -10,9 +10,10 @@ If Echo is connected as an MCP server, use its tools. Otherwise run `echoclip gu
 2. `echoclip prepare "<url>" --clips 4 --style echo --length medium --aspect 9:16 [--topic "..."]`
 3. Read BRIEF, judge the moments for Instagram's signals (watch time, sends, likes), and write the JSON to WRITE.
 4. `echoclip finish <job> --detach`, then poll `echoclip status <job>`.
-5. `echoclip clips <job>`, with its `instagram_check` notes, and `echoclip frames <job> <clip>` to review.
-6. `echoclip fix <job> <clip> --start-at <i> --end-after <i> --hook "..." --style solo` to fix.
-7. `echoclip export <job>`, then hand over a table, the file paths and the captions.
+5. Direct the camera for every clip: `echoclip shots <job> <clip>`, study the contact sheets, then `echoclip direct <job> <clip> '[...]'` with a layout, focus, zoom and motivated moves per shot. Never fill-and-centre by default.
+6. `echoclip clips <job>`, with its `instagram_check` notes, and `echoclip frames <job> <clip>` to review.
+7. `echoclip fix <job> <clip> --start-at <i> --end-after <i> --hook "..." --style solo` to fix.
+8. `echoclip export <job>`, then hand over a table, the file paths and the captions.
 
 Never publish to Instagram unless the user explicitly asks.
 

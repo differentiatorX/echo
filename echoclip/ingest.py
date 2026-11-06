@@ -105,20 +105,31 @@ def words_to_lines(words: list[dict], max_words: int = 28, gap: float = 0.7) -> 
 
 def download_section(url: str, start: float, end: float, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and out.stat().st_size > 0:
+    if out.exists() and out.stat().st_size > 0 and probe(out)["w"] > 0:
         return out
-    run(ytdlp() + [
-        "--no-playlist", "-N", "4",
-        "-f", "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b",
-        "--merge-output-format", "mp4",
-        "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
-        "-o", str(out), url], timeout=900)
-    if not out.exists():
-        cands = sorted(out.parent.glob(out.stem + "*"))
-        if not cands:
-            raise EchoError(f"Download produced no file for {start:.1f}-{end:.1f}s")
-        cands[0].rename(out)
-    return out
+    formats = ["bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b",
+               "bv*+ba/b"]
+    last = ""
+    for fmt in formats:
+        for f in out.parent.glob(out.stem + "*"):
+            f.unlink(missing_ok=True)
+        try:
+            run(ytdlp() + ["--no-playlist", "-N", "4", "-f", fmt, "--merge-output-format", "mp4",
+                           "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
+                           "-o", str(out), url], timeout=900)
+        except EchoError as e:
+            last = str(e)
+            continue
+        if not out.exists():
+            cands = sorted(out.parent.glob(out.stem + "*"))
+            if cands:
+                cands[0].rename(out)
+        if out.exists() and probe(out)["w"] > 0:
+            return out
+        last = "YouTube returned audio only"
+    raise EchoError(f"Couldn't download video for {start:.0f}-{end:.0f}s ({last[-200:]}). YouTube needs a "
+                    "JavaScript runtime: install Node.js (winget install OpenJS.NodeJS.LTS) and update yt-dlp "
+                    "(pip install -U \"yt-dlp[default]\").")
 
 
 def cut_local(src: Path, start: float, end: float, out: Path) -> Path:

@@ -144,7 +144,8 @@ def frames(job_id: str, clip: str) -> list[str]:
 
 
 def fix(job_id: str, clip: str, start_at: int | None = None, end_after: int | None = None, cut: str = "",
-        hook: str = "", cold_open: bool | None = None, style: str = "", reset: bool = False) -> dict:
+        hook: str = "", cold_open: bool | None = None, style: str = "", reset: bool = False,
+        trim: bool | None = None, replace: str = "") -> dict:
     job = _job(job_id)
     c = job.clip(clip)
     ov = dict(c.get("overrides") or {})
@@ -167,6 +168,15 @@ def fix(job_id: str, clip: str, start_at: int | None = None, end_after: int | No
         ov["cold_open"] = cold_open
     if style:
         ov["preset"] = None if style in ("echo", "hookcut", "default") else style
+    if trim is not None:
+        ov["trim"] = trim
+    if replace:
+        rep = dict(ov.get("replace") or {})
+        for pair in replace.split(","):
+            if "=" in pair:
+                a, b = pair.split("=", 1)
+                rep[a.strip()] = b.strip()
+        ov["replace"] = rep
     patch = {"overrides": ov}
     if hook:
         patch["hook_title"] = hook
@@ -243,3 +253,15 @@ def list_jobs() -> list[dict]:
     from .pipeline import list_jobs as lj
     return [{"id": j["id"], "title": j.get("title"), "state": j.get("state"), "clips": j.get("clip_count")}
             for j in lj()]
+
+
+def shots(job_id: str, clip: str) -> dict:
+    from .direct import shots as _shots
+    return _shots(_job(job_id), clip)
+
+
+def direct(job_id: str, clip: str, directions: list[dict]) -> dict:
+    from .direct import direct as _direct
+    from .transcribe import unload
+    unload()
+    return _direct(_job(job_id), clip, directions)

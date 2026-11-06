@@ -3,7 +3,7 @@
 - Jump-cuts dead air (gap > max_gap) down to a breath.
 - Drops isolated filler words (um, uh...).
 - Cold open: the judge's strongest line plays first as a teaser, then a hard cut to the start.
-- Punch zoom: every real cut and every ~3 s alternates framing so the eye never settles.
+- Punch zoom: only across real jump cuts, centred on the subject, so cuts read as intentional.
 """
 from __future__ import annotations
 
@@ -50,10 +50,26 @@ def find_quote(words: list[dict], quote: str | None) -> tuple[int, int] | None:
     return (best_i, best_i + len(q) - 1) if best >= 0.7 else None
 
 
-def _runs(words: list[dict], max_gap: float, keep: float, cut_silence: bool) -> list[Piece]:
+def _quiet(energy: dict | None, a: float, b: float, ratio: float) -> bool:
+    """True when the audio between a and b is near-silent compared with the speech around it.
+    A gap full of crowd noise, music or a ball hitting a bat is not silence."""
+    if not energy:
+        return True
+    hop, rms = energy["hop"], energy["rms"]
+    i0, i1 = int(a / hop), max(int(b / hop), int(a / hop) + 1)
+    seg = rms[i0:i1]
+    if not seg:
+        return True
+    return (sum(seg) / len(seg)) < ratio * energy["speech"]
+
+
+def _runs(words: list[dict], max_gap: float, keep: float, cut_silence: bool,
+          energy: dict | None = None, ratio: float = .35) -> list[Piece]:
     pieces: list[Piece] = []
     for i, w in enumerate(words):
-        if pieces and (not cut_silence or w["s"] - words[i - 1]["e"] <= max_gap) \
+        gap_ok = (not cut_silence or w["s"] - words[i - 1]["e"] <= max_gap
+                  or not _quiet(energy, words[i - 1]["e"], w["s"], ratio)) if i else True
+        if pieces and gap_ok \
                 and w.get("_i", i) == words[i - 1].get("_i", i - 1) + 1:
             pieces[-1].src_e = w["e"] + POST
             continue
@@ -82,7 +98,8 @@ def _split_long(p: Piece, words: list[dict], every: float) -> list[Piece]:
 
 
 def plan(words: list[dict], start: float, end: float, cfg: dict, cold_open: str | None = None,
-         removed: set[int] | None = None, keywords: list[str] | None = None) -> dict:
+         removed: set[int] | None = None, keywords: list[str] | None = None,
+         energy: dict | None = None, trim: bool | None = None) -> dict:
     """words: precise words in the clip file's local time. start/end: clip bounds in local time."""
     e = cfg["edit"]
     removed = removed or set()
@@ -108,18 +125,32 @@ def plan(words: list[dict], start: float, end: float, cfg: dict, cold_open: str 
 
     pieces: list[Piece] = []
     for name, ws in groups:
-        runs = _runs(ws, e["max_gap"], e["keep_gap"], e["remove_silence"])
+        cut = e["remove_silence"] if trim is None else trim
+        runs = _runs(ws, e["max_gap"], e["keep_gap"], cut, energy, e.get("quiet_ratio", .35))
         for r in runs:
             r.group = name
-            pieces.extend(_split_long(r, ws, e["punch_every"]))
+            if e.get("punch", "cuts") == "rhythm":
+                pieces.extend(_split_long(r, ws, e["punch_every"]))
+            else:
+                pieces.append(r)
+    # Zoom only where it does a job: a punch-in hides a jump cut. No zooms on a timer.
     zoom_hi = float(e["punch_zoom"])
-    t, j = 0.0, 0
-    for p in pieces:
-        if p.group == "cold":
-            p.zoom = round(zoom_hi * 1.04, 3)
+    mode = e.get("punch", "cuts")
+    t, level = 0.0, 0
+    for i, p in enumerate(pieces):
+        if mode == "off":
+            p.zoom = 1.0
+        elif p.group == "cold":
+            p.zoom = zoom_hi
+        elif mode == "rhythm":
+            p.zoom = 1.0 if level % 2 == 0 else zoom_hi
+            level += 1
         else:
-            p.zoom = 1.0 if j % 2 == 0 else zoom_hi
-            j += 1
+            prev = pieces[i - 1] if i else None
+            jump = prev is not None and prev.group == p.group and p.src_s - prev.src_e > .05
+            if jump:
+                level += 1                     # alternate only across a real cut, so the cut reads as intentional
+            p.zoom = zoom_hi if level % 2 else 1.0
         p.out_s = t
         t += p.dur
 

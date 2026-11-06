@@ -2,6 +2,7 @@
 so re-running a job resumes where it stopped and re-rendering a clip takes seconds."""
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -182,7 +183,64 @@ TRANSCRIPT (times in seconds)
 """
 
 
+class JobBusy(EchoError):
+    pass
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            ctypes.windll.kernel32.CloseHandle(h)
+            return code.value == 259                                      # STILL_ACTIVE
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def acquire(job: Job) -> None:
+    """One worker per job. A second `finish` on a running job used to race the first one's ffmpeg."""
+    lock = job.dir / ".running"
+    if lock.exists():
+        try:
+            pid = int(lock.read_text().strip() or 0)
+        except ValueError:
+            pid = 0
+        if pid != os.getpid() and _pid_alive(pid):
+            raise JobBusy(f"Job {job.id} is already running (process {pid}). Poll `echoclip status {job.id}` instead.")
+    lock.write_text(str(os.getpid()))
+
+
+def release(job: Job) -> None:
+    try:
+        lock = job.dir / ".running"
+        if lock.exists() and lock.read_text().strip() == str(os.getpid()):
+            lock.unlink()
+    except OSError:
+        pass
+
+
 def run_job(job: Job) -> None:
+    try:
+        acquire(job)
+    except JobBusy as e:
+        print(str(e))
+        return
+    try:
+        _run_job(job)
+    finally:
+        release(job)
+
+
+def _run_job(job: Job) -> None:
     cfg = _cfg(job)
     src = job.status()["source"]
     is_url = ingest.is_url(src)
@@ -297,17 +355,27 @@ def run_job(job: Job) -> None:
             job.save_clips(clips)
             job.stage("judge", "done", t.secs())
 
-        # 5. cut + render each clip
+        # 5. cut + render: downloads in parallel, transcription in order (one GPU), two renders at a time
         t = Timer()
         job.stage("cut", "running")
-        for c in clips:
-            if c.get("state") == "ready" and (job.dir / c["id"] / f"{c['id']}.mp4").exists():
-                continue
+        from concurrent.futures import ThreadPoolExecutor
+        todo = [c for c in clips if not (c.get("state") == "ready" and (job.dir / c["id"] / f"{c['id']}.mp4").exists())]
+
+        def guard(fn, cid, *a):
             try:
-                prepare_clip(job, c["id"], cfg, info)
-                render_clip(job, c["id"], cfg)
+                fn(job, cid, *a)
+                return True
             except Exception as e:  # one bad clip shouldn't sink the job
-                job.patch_clip(c["id"], state="error", error=str(e)[:400])
+                job.patch_clip(cid, state="error", error=str(e)[:400])
+                return False
+
+        with ThreadPoolExecutor(3) as pool:
+            ok = dict(zip([c["id"] for c in todo], pool.map(lambda c: guard(fetch_clip, c["id"], info), todo)))
+        ready = [cid for cid, good in ok.items() if good and guard(analyze_clip, cid, cfg)]
+        from .transcribe import unload
+        unload()                                   # free GPU memory before ffmpeg/NVENC needs it
+        for cid in ready:                          # one render at a time: no encoder or VRAM contention
+            guard(render_clip, cid, cfg)
         job.stage("cut", "done", t.secs())
         job.update(state="done", stage=None)
     except Exception as e:
@@ -318,7 +386,34 @@ def run_job(job: Job) -> None:
         job.update(state="error", error=str(e)[:600])
 
 
-def prepare_clip(job: Job, cid: str, cfg: dict, info: dict) -> None:
+def _energy(seg: Path) -> dict:
+    """Loudness every 50 ms, so trimming can tell dead air from crowd noise and action."""
+    import subprocess
+
+    import numpy as np
+
+    from .util import clean_env
+    p = subprocess.run(["ffmpeg", "-v", "error", "-i", str(seg), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                       capture_output=True, env=clean_env(), timeout=300)
+    x = np.frombuffer(p.stdout, dtype=np.int16).astype(np.float32) / 32768
+    hop = 400
+    n = len(x) // hop
+    rms = np.sqrt((x[: n * hop].reshape(n, hop) ** 2).mean(axis=1)) if n else np.zeros(1)
+    return {"hop": .05, "rms": [round(float(v), 5) for v in rms]}
+
+
+def _splice(words: list[dict], rough: list[dict], start: float, end: float, min_gap: float = 2.0) -> list[dict]:
+    """Fill holes where the precise pass heard nothing but YouTube's captions did (speech over music)."""
+    if not rough:
+        return words
+    edges = [start] + [x for w in words for x in (w["s"], w["e"])] + [end]
+    gaps = [(edges[i], edges[i + 1]) for i in range(0, len(edges) - 1, 2) if edges[i + 1] - edges[i] >= min_gap]
+    added = [dict(r, src="captions") for r in rough for g0, g1 in gaps
+             if g0 + .1 <= (r["s"] + r["e"]) / 2 <= g1 - .1 and start <= r["s"] <= end]
+    return sorted(words + added, key=lambda w: w["s"]) if added else words
+
+
+def fetch_clip(job: Job, cid: str, info: dict) -> None:
     c = job.clip(cid)
     d = job.dir / cid
     d.mkdir(exist_ok=True)
@@ -326,21 +421,42 @@ def prepare_clip(job: Job, cid: str, cfg: dict, info: dict) -> None:
     pad = 3.0
     sec_s = max(0.0, c["start"] - pad)
     sec_e = min(info.get("duration") or c["end"] + pad, c["end"] + pad)
+    job.patch_clip(cid, state="fetching", sec_s=round(sec_s, 3),
+                   local_start=round(c["start"] - sec_s, 3), local_end=round(c["end"] - sec_s, 3))
     seg = d / "source.mp4"
-    job.patch_clip(cid, state="fetching")
     if ingest.is_url(src):
         ingest.download_section(src, sec_s, sec_e, seg)
     else:
         ingest.cut_local(Path(src), sec_s, sec_e, seg)
+
+
+def analyze_clip(job: Job, cid: str, cfg: dict) -> None:
+    c = job.clip(cid)
+    d = job.dir / cid
+    seg = d / "source.mp4"
     if not (d / "words.json").exists():
         job.patch_clip(cid, state="transcribing")
         from .transcribe import transcribe_words
-        write_json(d / "words.json", transcribe_words(seg, cfg["whisper"]["model"],
-                                                      None if cfg["language"] == "auto" else cfg["language"]))
-    if not (d / "layout.json").exists():
+        w = cfg["whisper"]
+        title = (read_json(job.dir / "info.json", {}) or {}).get("title", "")
+        words = transcribe_words(seg, w["model"], None if cfg["language"] == "auto" else cfg["language"],
+                                 w.get("device", "auto"), w.get("vad", False), prompt=title)
+        rough = read_json(job.dir / "rough_words.json", []) or []
+        off = c.get("sec_s", 0.0)
+        rough_local = [{"w": r["w"], "s": round(r["s"] - off, 3), "e": round(r["e"] - off, 3)} for r in rough
+                       if c["start"] - 1 <= r["s"] <= c["end"] + 1]
+        write_json(d / "words.json", _splice(words, rough_local, c["local_start"], c["local_end"]))
+    if not (d / "energy.json").exists():
+        write_json(d / "energy.json", _energy(seg))
+    lay = read_json(d / "layout.json")
+    if not lay or lay.get("version") != 2:          # re-frame clips made by the old per-shot framer
         job.patch_clip(cid, state="framing")
-        write_json(d / "layout.json", reframe.analyze(seg))
-    job.patch_clip(cid, local_start=round(c["start"] - sec_s, 3), local_end=round(c["end"] - sec_s, 3))
+        write_json(d / "layout.json", reframe.analyze(seg, cfg.get("reframe")))
+
+
+def prepare_clip(job: Job, cid: str, cfg: dict, info: dict) -> None:
+    fetch_clip(job, cid, info)
+    analyze_clip(job, cid, cfg)
 
 
 def render_clip(job: Job, cid: str, cfg: dict | None = None) -> dict:
@@ -349,16 +465,33 @@ def render_clip(job: Job, cid: str, cfg: dict | None = None) -> dict:
     d = job.dir / cid
     words = read_json(d / "words.json", [])
     analysis = read_json(d / "layout.json")
+    if not analysis or analysis.get("version") != 2:   # clips framed by the old per-shot framer
+        analysis = reframe.analyze(d / "source.mp4", cfg.get("reframe"))
+        write_json(d / "layout.json", analysis)
     ov = c.get("overrides") or {}
     job.patch_clip(cid, state="rendering", error=None)
+    energy = read_json(d / "energy.json")
+    if energy and energy.get("rms"):
+        import statistics
+        hop = energy["hop"]
+        speech = [energy["rms"][int(w["s"] / hop)] for w in words if int(w["s"] / hop) < len(energy["rms"])]
+        energy["speech"] = statistics.median(speech) if speech else max(energy["rms"])
     plan = edit.plan(words, c["local_start"], c["local_end"], cfg,
                      cold_open=c.get("cold_open") if ov.get("cold_open", True) else None,
-                     removed=set(ov.get("removed") or []), keywords=c.get("keywords"))
+                     removed=set(ov.get("removed") or []), keywords=c.get("keywords"),
+                     energy=energy, trim=ov.get("trim"))
+    for w in plan["words"]:                      # fix misheard names, e.g. Holland -> Haaland
+        for wrong, right in (ov.get("replace") or {}).items():
+            core = w["w"].strip(".,!?;:\"'")
+            if core.lower() == wrong.lower():
+                w["w"] = w["w"].replace(core, right)
     st = cfg["style"]
     ass = captions.build_ass(plan["words"], plan["duration"], ov.get("preset") or st["preset"],
                              c.get("hook_title", "") if st["hook_title"] else "", st["hook_seconds"],
                              st.get("watermark", ""), size=ASPECTS.get(cfg["render"].get("aspect"), ASPECTS["9:16"]))
     write_json(d / "edit.json", plan)
+    if ov.get("framing"):
+        analysis = {**analysis, "directions": ov["framing"]}     # the agent's camera directions
     render.render(d / "source.mp4", plan, analysis, ass, d / f"{cid}.mp4", cfg)
     modes = sorted({s.get("mode") for s in analysis.get("shots", [])})
     return job.patch_clip(cid, state="ready", duration=plan["duration"], layout=modes,

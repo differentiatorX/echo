@@ -8,7 +8,7 @@ from . import api
 
 INSTRUCTIONS = (
     "Echo turns a long video into the 3-5 best Instagram Reels. Workflow: call guide once and follow it. "
-    "prepare -> read_brief -> submit_judgments -> finish -> status (poll) -> clips -> frames -> fix -> export. "
+    "prepare -> read_brief -> submit_judgments -> finish -> status (poll) -> shots -> direct (every clip) -> clips -> frames -> fix -> export. "
     "You are the judge and the editor. Never publish unless the user explicitly asks."
 )
 
@@ -70,10 +70,26 @@ def build():
 
     @mcp.tool()
     def fix(job: str, clip: str, start_at: int | None = None, end_after: int | None = None, cut: str = "",
-            hook: str = "", cold_open: bool | None = None, style: str = "", reset: bool = False) -> str:
+            hook: str = "", cold_open: bool | None = None, style: str = "", reset: bool = False,
+            trim: bool | None = None, replace: str = "") -> str:
         """Edit one clip and re-render it in seconds. start_at / end_after are word indices from clips.
-        cut removes indices like "12-15,40". hook rewrites the on-screen title. style changes captions."""
-        return json.dumps(api.fix(job, clip, start_at, end_after, cut, hook, cold_open, style, reset))
+        cut removes indices like "12-15,40". hook rewrites the on-screen title. style changes captions.
+        trim=false keeps every second (use for sports or action where the moment is visual).
+        replace fixes misheard words in captions, e.g. "Holland=Haaland"."""
+        return json.dumps(api.fix(job, clip, start_at, end_after, cut, hook, cold_open, style, reset, trim, replace))
+
+    @mcp.tool()
+    def shots(job: str, clip: str) -> str:
+        """Every shot in a clip with contact-sheet images (3 frames per shot, position guides, the automatic crop
+        in gold, and what is said). Look at the images before directing the camera."""
+        return json.dumps(api.shots(job, clip), indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    def direct(job: str, clip: str, directions: list[dict]) -> str:
+        """Direct the camera, one entry per shot, then re-render. Each entry: shot (number), layout (fill | wide | split),
+        focus [x, y] in 0..1 of the source frame, follow (track a moving subject), zoom (fill 1.0-2.2, wide 1.0-1.8),
+        moves [{type: push, to, start, end} | {type: punch, to, at, hold}] in the clip's source seconds, why."""
+        return json.dumps(api.direct(job, clip, directions), indent=2)
 
     @mcp.tool()
     def cover(job: str, clip: str) -> str:

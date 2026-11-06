@@ -162,52 +162,71 @@ def fix(job_id: str, clip: str,
         hook: str = typer.Option(None, "--hook", help="New on-screen hook title"),
         cold_open: bool = typer.Option(None, "--cold-open/--no-cold-open"),
         style: str = typer.Option(None, "--style", help="echo | beast | karaoke | minimal"),
-        reset: bool = typer.Option(False, "--reset", help="Undo all word cuts")):
+        reset: bool = typer.Option(False, "--reset", help="Undo all word cuts"),
+        trim: bool = typer.Option(None, "--trim/--no-trim", help="Cut quiet gaps (default) or keep every second, for action clips"),
+        replace: str = typer.Option("", "--replace", help='Fix misheard words in captions, e.g. "Holland=Haaland"')):
     """Apply editor fixes to one clip and re-render it (seconds)."""
-    from .pipeline import render_clip
-    from .util import read_json
-    job = _job_or_exit(job_id)
-    c = job.clip(clip)
-    ov = dict(c.get("overrides") or {})
-    removed = set() if reset else set(ov.get("removed") or [])
-    words = read_json(job.dir / clip / "words.json", []) or []
-    in_clip = [i for i, w in enumerate(words)
-               if c.get("local_start", 0) - 0.05 <= (w["s"] + w["e"]) / 2 <= c.get("local_end", 0) + 0.05]
-    if start_at is not None:
-        removed |= {i for i in in_clip if i < start_at}
-    if end_after is not None:
-        removed |= {i for i in in_clip if i > end_after}
-    if cut:
-        for part in cut.replace(" ", "").split(","):
-            if "-" in part:
-                a, b = part.split("-", 1)
-                removed |= set(range(int(a), int(b) + 1))
-            elif part:
-                removed.add(int(part))
-    ov["removed"] = sorted(removed)
-    if cold_open is not None:
-        ov["cold_open"] = cold_open
-    if style:
-        ov["preset"] = None if style in ("echo", "hookcut") else style
-    patch = {"overrides": ov}
-    if hook:
-        patch["hook_title"] = hook
-    job.patch_clip(clip, **patch)
+    from . import api
+    from .util import EchoError
     try:
-        res = render_clip(job, clip)
-    except Exception as e:
-        job.patch_clip(clip, state="error", error=str(e)[:400])
+        res = api.fix(job_id, clip, start_at, end_after, cut or "", hook or "", cold_open, style or "", reset, trim, replace)
+    except EchoError as e:
         typer.secho(f"Re-render failed: {e}", fg="red")
         raise typer.Exit(1)
-    typer.echo(f"Re-rendered {clip}: {res.get('duration')}s → {job.dir / clip / (clip + '.mp4')}")
+    typer.echo(f"Re-rendered {clip}: {res['duration']}s → {res['video']}")
 
 
 @app.command()
-def rerender(job_id: str, clip: str):
-    """Re-render one clip after edits."""
+def shots(job_id: str, clip: str):
+    """Every shot in a clip, with contact sheets to study before directing the camera."""
+    import json
+    from . import api
+    typer.echo(json.dumps(api.shots(job_id, clip), indent=2, ensure_ascii=False))
+
+
+@app.command()
+def direct(job_id: str, clip: str,
+           directions: str = typer.Argument("", help="A JSON list of shot directions, or a path to a .json file"),
+           clear: bool = typer.Option(False, "--clear", help="Forget all directions and go back to automatic framing")):
+    """Direct the camera shot by shot: layout, focus, zoom, push-ins and punch-ins. Re-renders the clip."""
+    import json
+    from pathlib import Path
+    from . import api
+    from .direct import clear as _clear
     from .pipeline import Job, render_clip
-    render_clip(Job(job_id), clip)
-    typer.echo("Rendered.")
+    if clear:
+        job = Job(job_id)
+        _clear(job, clip)
+        render_clip(job, clip)
+        typer.echo("Back to automatic framing.")
+        return
+    raw = Path(directions).read_text("utf-8") if directions and Path(directions).exists() else directions
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        typer.secho(f"Directions must be JSON: {e}", fg="red")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(api.direct(job_id, clip, data if isinstance(data, list) else [data]), indent=2))
+
+
+@app.command()
+def rerender(job_id: str, clip: str = typer.Argument("", help="One clip, or leave empty for every clip"),
+             reframe: bool = typer.Option(False, "--reframe", help="Redo the subject tracking first")):
+    """Re-render clips with the current edit and framing (old clips get the new framing automatically)."""
+    from .pipeline import Job, render_clip
+    from .transcribe import unload
+    job = Job(job_id)
+    ids = [clip] if clip else [c["id"] for c in job.clips() if (job.dir / c["id"] / "source.mp4").exists()]
+    unload()
+    for cid in ids:
+        if reframe:
+            (job.dir / cid / "layout.json").unlink(missing_ok=True)
+        typer.echo(f"  {cid}: framing and rendering…")
+        try:
+            render_clip(job, cid)
+        except Exception as e:
+            typer.secho(f"  {cid} failed: {e}", fg="red")
+    typer.echo("Done. Run `echoclip export " + job_id + "` to refresh the copies in Videos/Echo.")
 
 
 @app.command()

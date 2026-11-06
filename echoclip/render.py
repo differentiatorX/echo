@@ -22,7 +22,28 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def _vchain(i: int, lay: dict, W: int, H: int, z: float, fps: int, accent: str, OW: int, OH: int) -> str:
+def _xexpr(track, t0, t1, W, cw):
+    """Piecewise-linear crop x over the piece's local time, from the camera path keyframes."""
+    pts = [(t - t0, x) for t, x in (track or []) if t0 - 1.0 <= t <= t1 + 1.0]
+    if not pts:
+        before = [x for t, x in (track or []) if t < t0]
+        pts = [(0.0, before[-1] if before else (track[0][1] if track else .5))]
+    px = [(round(max(0.0, t), 3), _clamp(x * W - cw / 2, 0, W - cw)) for t, x in pts]
+    if len(px) > 16:                                   # keep the expression short
+        step = len(px) / 16
+        px = [px[int(i * step)] for i in range(16)] + [px[-1]]
+    if max(v for _, v in px) - min(v for _, v in px) < 2:
+        return str(_even(px[0][1]))
+    expr = f"{px[-1][1]:.1f}"
+    for (ta, xa), (tb, xb) in reversed(list(zip(px, px[1:]))):
+        if tb - ta < 1e-3:
+            continue
+        expr = f"if(lt(t,{tb:.3f}),{xa:.1f}+({xb - xa:.1f})*(t-{ta:.3f})/{tb - ta:.3f},{expr})"
+    return f"if(lt(t,{px[0][0]:.3f}),{px[0][1]:.1f},{expr})"
+
+
+def _vchain(i: int, lay: dict, W: int, H: int, z: float, fps: int, accent: str, OW: int, OH: int,
+            t0: float = 0.0, t1: float = 0.0) -> str:
     src = f"[{i}:v]"
     tail = f"setsar=1,fps={fps},format=yuv420p[v{i}]"
     mode = lay.get("mode", "blur")
@@ -32,9 +53,11 @@ def _vchain(i: int, lay: dict, W: int, H: int, z: float, fps: int, accent: str, 
         ch = cw / ar
         if ch > H:
             ch, cw = H, H * ar
-        x = _clamp(lay["x"] * W - cw / 2, 0, W - cw)
-        y = _clamp(lay["y"] * H - ch * 0.40, 0, H - ch)
-        return f"{src}crop={_even(cw)}:{_even(ch)}:{_even(x)}:{_even(y)},scale={OW}:{OH}:flags=lanczos,{tail}"
+        y = _clamp(lay.get("y", .42) * H - ch * 0.40, 0, H - ch)
+        track = lay.get("track") or [[t0, lay.get("x", .5)]]
+        x = _xexpr(track, t0, t1, W, cw)
+        return (f"{src}crop=w={_even(cw)}:h={_even(ch)}:x='{x}':y={_even(y)},"
+                f"scale={OW}:{OH}:flags=lanczos,{tail}")
     if mode == "split":
         half = OH // 2
         har = OW / half
@@ -58,6 +81,87 @@ def _vchain(i: int, lay: dict, W: int, H: int, z: float, fps: int, accent: str, 
             f"boxblur=28:2,eq=brightness=-0.10:saturation=1.15[bg{i}];"
             f"[f{i}]scale={fw}:{fh}:force_original_aspect_ratio=decrease:force_divisible_by=2[fg{i}];"
             f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,{tail}")
+
+
+def _directed(i: int, dv: dict, lay: dict, W: int, H: int, fps: int, accent: str, OW: int, OH: int,
+              t0: float, t1: float):
+    """Frame one piece as the agent directed its shot. Returns the filter chain and where the
+    subject sits in the output frame (0..1), which anchors any zoom move."""
+    src = f"[{i}:v]"
+    tail = f"setsar=1,fps={fps},format=yuv420p[v{i}]"
+    fx, fy = dv["focus"]
+    if dv["layout"] == "split" and lay.get("mode") == "split":
+        return _vchain(i, lay, W, H, 1.0, fps, accent, OW, OH, t0, t1), (.5, .5)
+    if dv["layout"] == "wide":
+        z = dv["zoom"]
+        cw, ch = W / z, H / z
+        x = _clamp(fx * W - cw / 2, 0, W - cw)
+        y = _clamp(fy * H - ch / 2, 0, H - ch)
+        band = OW * ch / cw
+        focus = ((fx * W - x) / cw, .5 + ((fy * H - y) / ch - .5) * band / OH)
+        return (f"{src}split=2[b{i}][f{i}];"
+                f"[b{i}]scale={OW}:{OH}:force_original_aspect_ratio=increase,crop={OW}:{OH},"
+                f"boxblur=28:2,eq=brightness=-0.12:saturation=1.15[bg{i}];"
+                f"[f{i}]crop={_even(cw)}:{_even(ch)}:{_even(x)}:{_even(y)},"
+                f"scale={OW}:-2:flags=lanczos[fg{i}];"
+                f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,{tail}"), focus
+    ar = OW / OH
+    z = dv["zoom"]
+    cw = min(W, H * ar) / z
+    ch = cw / ar
+    follow = dv.get("follow") and lay.get("mode") == "crop" and lay.get("track")
+    track = lay["track"] if follow else [[t0, fx]]
+    x = _xexpr(track, t0, t1, W, cw)
+    y = _clamp(fy * H - ch * .40, 0, H - ch)
+    if follow:
+        fxo = .5
+    else:
+        x0 = _clamp(fx * W - cw / 2, 0, W - cw)
+        fxo = (fx * W - x0) / cw
+    fyo = (fy * H - y) / ch
+    return (f"{src}crop=w={_even(cw)}:h={_even(ch)}:x='{x}':y={_even(y)},"
+            f"scale={OW}:{OH}:flags=lanczos,{tail}"), (fxo, fyo)
+
+
+def _to_out(t: float, pieces: list[dict]) -> float:
+    """Map a source time to the edited timeline (a time inside a removed pause snaps to the next kept piece)."""
+    for p in pieces:
+        if p["src_s"] <= t < p["src_e"]:
+            return p["out_s"] + (t - p["src_s"])
+        if t < p["src_s"]:
+            return p["out_s"]
+    return pieces[-1]["out_s"] + pieces[-1]["src_e"] - pieces[-1]["src_s"]
+
+
+def _zoom_pass(moves: list[tuple], focus: list[tuple], fps: int, OW: int, OH: int) -> str:
+    """One smooth zoom over the edited clip. moves: (out_start, out_end, kind, rel_from, rel_to, hold).
+    focus: (out_start, out_end, fx, fy) per piece, so each zoom is anchored on that shot's subject."""
+    T = f"(on/{fps})"
+    z = "1"
+    for a, b, kind, r0, r1, hold in sorted(moves, key=lambda m: m[0]):
+        if kind == "push":                       # hold = the shot's end: zoom returns to normal on the next shot
+            z = (f"if(lt({T},{a:.3f}),{z},if(lt({T},{b:.3f}),{r0:.3f}+({r1 - r0:.3f})*({T}-{a:.3f})/{b - a:.3f},"
+                 f"if(lt({T},{hold:.3f}),{r1:.3f},{z})))")
+        else:
+            e = .18
+            z = (f"if(lt({T},{a - e:.3f}),{z},if(lt({T},{a + hold:.3f}),{r0:.3f}+({r1 - r0:.3f})*min(1,({T}-{a - e:.3f})/{e}),"
+                 f"if(lt({T},{a + hold + e:.3f}),{r1:.3f}+({r0 - r1:.3f})*min(1,({T}-{a + hold:.3f})/{e}),{z})))")
+    fxe, fye = ".5", ".42"
+    for s0, s1, fx, fy in reversed(focus):
+        fxe = f"if(lt({T},{s1:.3f}),{fx:.3f},{fxe})"
+        fye = f"if(lt({T},{s1:.3f}),{fy:.3f},{fye})"
+    return (f"scale={OW * 2}:{OH * 2}:flags=lanczos,"
+            f"zoompan=z='{z}':x='({fxe})*iw*(1-1/zoom)':y='({fye})*ih*(1-1/zoom)':d=1:s={OW}x{OH}:fps={fps},setsar=1")
+
+
+def _shot_index(analysis: dict, t: float) -> int:
+    for k, sh in enumerate(analysis["shots"]):
+        if sh["s"] <= t < sh["e"]:
+            return k
+    return len(analysis["shots"]) - 1
+
+
+_NVENC_BAD = False
 
 
 @lru_cache(maxsize=1)
@@ -114,6 +218,7 @@ def sfx_events(edit: dict) -> list[tuple[str, float]]:
 
 
 def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg: dict) -> Path:
+    global _NVENC_BAD
     r, st = cfg["render"], cfg["style"]
     OW, OH = ASPECTS.get(r.get("aspect", "9:16"), ASPECTS["9:16"])
     accent = "#1E7BFF"
@@ -130,11 +235,20 @@ def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg:
 
     cmd = ["ffmpeg", "-y", "-hide_banner", "-v", "error"]
     graph = []
+    focus = []
     for i, p in enumerate(pieces):
         dur = p["src_e"] - p["src_s"]
         cmd += ["-ss", f"{p['src_s']:.3f}", "-t", f"{dur:.3f}", "-i", str(seg.resolve())]
-        lay = layout_at(analysis, (p["src_s"] + p["src_e"]) / 2)
-        graph.append(_vchain(i, lay, W, H, p["zoom"], r["fps"], accent, OW, OH))
+        mid = (p["src_s"] + p["src_e"]) / 2
+        lay = layout_at(analysis, mid)
+        dv = (analysis.get("directions") or {}).get(str(_shot_index(analysis, mid)))
+        if dv:
+            chain, fo = _directed(i, dv, lay, W, H, r["fps"], accent, OW, OH, p["src_s"], p["src_e"])
+            graph.append(chain)
+            focus.append((p["out_s"], p["out_s"] + dur, fo[0], fo[1]))
+        else:
+            focus.append((p["out_s"], p["out_s"] + dur, .5, .42))
+            graph.append(_vchain(i, lay, W, H, p["zoom"] if lay.get("mode") == "crop" else 1.0, r["fps"], accent, OW, OH, p["src_s"], p["src_e"]))
         a = f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if p["cut_in"]:
             a += ",afade=t=in:d=0.012"
@@ -147,6 +261,29 @@ def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg:
 
     # ---- video overlays
     vlast = "[cv]"
+    zmoves = []
+    for k, dv in (analysis.get("directions") or {}).items():
+        sh = analysis["shots"][int(k)]
+        mine = [p for p in pieces if sh["s"] <= (p["src_s"] + p["src_e"]) / 2 < sh["e"]]
+        if not mine:
+            continue
+        until = max(p["out_s"] + p["src_e"] - p["src_s"] for p in mine)
+        base, level = dv["zoom"], 1.0
+        for m in sorted(dv.get("moves") or [], key=lambda m: m.get("start", m.get("at", 0))):
+            rel = m["to"] / base
+            if m["type"] == "push":
+                a, b = _to_out(m["start"], pieces), min(_to_out(m["end"], pieces), until)
+                if b - a > .1:
+                    zmoves.append((a, b, "push", level, rel, until))
+                    level = rel
+            else:
+                a = _to_out(m["at"], pieces)
+                if a < until:
+                    zmoves.append((a, a, "punch", level, rel, min(m["hold"], until - a)))
+    zmoves.sort(key=lambda m: m[0])
+    if zmoves:
+        graph.append(f"{vlast}{_zoom_pass(zmoves, focus, r['fps'], OW, OH)}[czm]")
+        vlast = "[czm]"
     logo = Path(st.get("logo") or "").expanduser()
     if st.get("logo") and logo.is_file():
         cmd += ["-i", str(logo.resolve())]
@@ -192,13 +329,30 @@ def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg:
             alast = "[amix2]"
     graph.append(f"{alast}loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000[ao]")
 
-    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(r["crf"]), "-profile:v", "high"]
-    if r.get("encoder") in ("auto", "nvenc") and _has_nvenc():
-        enc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(r["crf"] + 1), "-b:v", "0"]
-    cmd += ["-filter_complex", ";".join(graph), "-map", vlast, "-map", "[ao]", *enc,
-            "-pix_fmt", "yuv420p", "-r", str(r["fps"]), "-c:a", "aac", "-b:a", "192k",
+    x264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(r["crf"]), "-profile:v", "high"]
+    encoders = [x264]
+    if r.get("encoder") in ("auto", "nvenc") and _has_nvenc() and not _NVENC_BAD:
+        encoders.insert(0, ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(r["crf"] + 1), "-b:v", "0"])
+    tail = ["-filter_complex", ";".join(graph), "-map", vlast, "-map", "[ao]"]
+    post = ["-pix_fmt", "yuv420p", "-r", str(r["fps"]), "-c:a", "aac", "-b:a", "192k",
             "-t", f"{D:.3f}", "-movflags", "+faststart", out.name]
-    run(cmd, cwd=work, timeout=1800)
+    log = work / "render.log"
+    errors = []
+    for attempt, enc in enumerate(encoders + [x264]):    # GPU encoder, then CPU, then CPU once more
+        try:
+            if out.exists():
+                out.unlink()
+            run(cmd + tail + enc + post, cwd=work, timeout=1800)
+            if not out.exists() or out.stat().st_size < 10_000:
+                raise EchoError("ffmpeg finished but wrote no video")
+            break
+        except EchoError as e:
+            if enc[1] == "h264_nvenc":
+                _NVENC_BAD = True                 # don't retry the GPU encoder for the rest of this run
+            errors.append(f"attempt {attempt + 1} ({enc[1]}): {e}")
+            log.write_text("\n\n".join(errors) + "\n\ncommand:\n" + " ".join(cmd + tail + enc + post), "utf-8")
+    else:
+        raise EchoError(f"Render failed after {len(errors)} tries. Details: {log}\n" + errors[-1][:300])
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{min(1.2, D / 2):.2f}", "-i", out.name,
          "-frames:v", "1", "-q:v", "3", out.with_suffix(".jpg").name], cwd=work, timeout=60)
     return out

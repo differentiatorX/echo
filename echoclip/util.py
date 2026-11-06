@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,22 +13,51 @@ class EchoError(RuntimeError):
     pass
 
 
+def clean_env() -> dict:
+    """PATH without Python package folders (torch, nvidia, ...). Their DLLs can crash ffmpeg on Windows."""
+    env = dict(os.environ)
+    parts = env.get("PATH", "").split(os.pathsep)
+    bad = ("site-packages", "torch", "\\nvidia\\", "/nvidia/")
+    env["PATH"] = os.pathsep.join(p for p in parts if not any(b in p.lower() for b in bad))
+    return env
+
+
 def run(cmd: list[str], cwd: Path | None = None, timeout: int | None = None, input: str | None = None) -> str:
+    name = Path(cmd[0]).name.lower()
+    env = clean_env() if name.startswith(("ffmpeg", "ffprobe")) else None
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
-                           input=input, encoding="utf-8", errors="replace")
+                           input=input, encoding="utf-8", errors="replace", env=env)
     except FileNotFoundError as e:
         raise EchoError(f"Command not found: {cmd[0]}. Run `echoclip doctor`.") from e
     except subprocess.TimeoutExpired as e:
         raise EchoError(f"Timed out after {timeout}s: {' '.join(cmd[:3])}") from e
     if p.returncode != 0:
         tail = (p.stderr or p.stdout or "").strip().splitlines()[-12:]
+        if not tail:
+            raise EchoError(f"{Path(cmd[0]).name} exited with code {p.returncode} and no message. It most likely "
+                            "crashed loading a conflicting library. Run `echoclip doctor`.")
         raise EchoError(f"{Path(cmd[0]).name} failed:\n" + "\n".join(tail))
     return p.stdout
 
 
+_JS: list[str] | None = None
+
+
 def ytdlp() -> list[str]:
-    return [sys.executable, "-m", "yt_dlp"]
+    """yt-dlp with a JavaScript runtime: YouTube now needs one to hand out video formats."""
+    global _JS
+    if _JS is None:
+        _JS = []
+        if not shutil.which("deno") and shutil.which("node"):
+            try:
+                helptext = subprocess.run([sys.executable, "-m", "yt_dlp", "--help"], capture_output=True,
+                                          text=True, timeout=30).stdout
+                if "--js-runtimes" in helptext:
+                    _JS = ["--js-runtimes", "node"]
+            except Exception:
+                pass
+    return [sys.executable, "-m", "yt_dlp", *_JS]
 
 
 def probe(path: Path) -> dict:

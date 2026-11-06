@@ -102,3 +102,80 @@ def test_connect_merges_without_clobbering(tmp_path, monkeypatch):
     data = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
     assert "other" in data["mcpServers"] and data["mcpServers"]["echo"]["args"][-1] == "mcp"
     assert (tmp_path / ".cursor" / "mcp.json.bak").exists()
+
+
+def test_loud_gaps_are_kept_quiet_gaps_are_cut():
+    ws = words()
+    loud = {"hop": .05, "rms": [.2] * 2000, "speech": .2}
+    quiet = {"hop": .05, "rms": [.2] * 2000, "speech": .2}
+    for i in range(len(quiet["rms"])):
+        t = i * .05
+        if not any(w["s"] - .02 <= t <= w["e"] + .02 for w in ws):
+            quiet["rms"][i] = .005
+    keep = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS, energy=loud)
+    cut = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS, energy=quiet)
+    assert keep["duration"] > cut["duration"]                 # crowd noise / action survives
+    none = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS, energy=quiet, trim=False)
+    assert none["duration"] >= keep["duration"]               # --no-trim keeps everything
+
+
+def test_splice_fills_gaps_from_captions():
+    from echoclip.pipeline import _splice
+    precise = [{"w": "a", "s": 0.5, "e": 0.8}, {"w": "b", "s": 6.0, "e": 6.3}]
+    rough = [{"w": "idiot", "s": 3.0, "e": 3.3}, {"w": "sandwich", "s": 3.4, "e": 3.8}, {"w": "a", "s": .5, "e": .8}]
+    out = _splice(precise, rough, 0, 7)
+    assert [w["w"] for w in out] == ["a", "idiot", "sandwich", "b"] and out[1]["src"] == "captions"
+
+
+def test_reframe_never_letterboxes_landscape_without_detectors(monkeypatch, tmp_path):
+    import numpy as np
+    import echoclip.reframe as rf
+    monkeypatch.setattr(rf, "_detectors", lambda: {})          # e.g. OpenCV without the cascades
+    monkeypatch.setattr(rf, "probe", lambda p: {"w": 1920, "h": 1080, "dur": 10})
+    monkeypatch.setattr(rf, "shots", lambda p: [(0.0, 5.0), (5.0, 10.0)])
+    monkeypatch.setattr(rf, "_frames", lambda p: ([i * .25 + .125 for i in range(40)], np.zeros((40, 360, 640), np.uint8)))
+    a = rf.analyze(tmp_path / "x.mp4")
+    assert a["version"] == 2 and all(sh["mode"] == "crop" for sh in a["shots"])
+
+
+def test_crashed_tool_gives_a_readable_error():
+    import sys
+    import pytest
+    from echoclip.util import EchoError, run
+    with pytest.raises(EchoError, match="no message"):
+        run([sys.executable, "-c", "import sys; sys.exit(3)"])
+
+
+def test_zoom_only_on_real_jump_cuts():
+    ws = words()
+    r = plan(ws, ws[0]["s"], ws[-1]["e"], DEFAULTS)
+    pieces = r["pieces"]
+    for a, b in zip(pieces, pieces[1:]):
+        if b["src_s"] - a["src_e"] <= .05:          # continuous footage: framing must not change
+            assert a["zoom"] == b["zoom"]
+
+
+def test_camera_holds_inside_deadzone_and_pans_smoothly():
+    from echoclip.reframe import _operator
+    still = _operator([0, .25, .5, .75, 1], [.5, .51, .49, .52, .5], .316, dead=.035, max_pan=.25)
+    assert len(still) <= 2 and all(abs(x - still[0][1]) < 1e-6 for _, x in still)
+    moving = _operator([i * .25 for i in range(12)], [.5] * 2 + [.8] * 10, .316, dead=.035, max_pan=.25)
+    steps = [b[1] - a[1] for a, b in zip(moving, moving[1:])]
+    assert max(steps) <= .25 * .25 + 1e-6            # never jumps faster than the pan limit
+    assert moving[-1][1] > .7
+
+
+def test_direct_validation_and_timeline_mapping():
+    import pytest
+    from echoclip.direct import _validate
+    from echoclip.render import _to_out, _zoom_pass
+    from echoclip.util import EchoError
+    d = _validate({"shot": 1, "layout": "fill", "focus": [1.4, -1], "zoom": 9,
+                   "moves": [{"type": "punch", "to": 3, "at": 5, "hold": 9}]}, 3)
+    assert d["focus"] == [1, 0] and d["zoom"] == 2.2 and d["moves"][0]["to"] == 2.2 and d["moves"][0]["hold"] == 4.0
+    with pytest.raises(EchoError):
+        _validate({"shot": 7}, 3)
+    pieces = [{"src_s": 1.0, "src_e": 3.0, "out_s": 0.0}, {"src_s": 5.0, "src_e": 8.0, "out_s": 2.0}]
+    assert _to_out(2.0, pieces) == 1.0 and _to_out(4.0, pieces) == 2.0 and _to_out(6.0, pieces) == 3.0
+    zp = _zoom_pass([(1.0, 2.0, "push", 1.0, 1.3, 5.0)], [(0, 5, .4, .35)], 30, 1080, 1920)
+    assert "zoompan" in zp and "1.300" in zp and "0.400" in zp

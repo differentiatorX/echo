@@ -27,13 +27,13 @@ DEFAULTS: dict = {
     },
     "clips": {"count": 4, "min_len": 25, "max_len": 55, "candidates": 12, "topic": ""},
     "language": "en",
-    "whisper": {"model": "auto", "rough_model": "base"},
+    "whisper": {"model": "auto", "rough_model": "base", "device": "auto", "vad": False},
     "signals": {"heatmap": True, "comments": True, "max_comments": 400},
     "weights": {"llm": 0.6, "heat": 0.25, "crowd": 0.1, "pace": 0.05},
     "edit": {
-        "remove_silence": True, "max_gap": 0.35, "keep_gap": 0.08,
+        "remove_silence": True, "max_gap": 0.35, "keep_gap": 0.08, "quiet_ratio": 0.35,
         "remove_fillers": True, "cold_open": True, "cold_open_repeat": False,
-        "punch_zoom": 1.12, "punch_every": 3.2,
+        "punch": "cuts", "punch_zoom": 1.08, "punch_every": 3.2,
     },
     "style": {
         "preset": "echo", "hook_title": True, "hook_seconds": 2.6,
@@ -45,6 +45,7 @@ DEFAULTS: dict = {
         "music_volume": 0.18,
     },
     "render": {"encoder": "auto", "crf": 20, "fps": 30, "aspect": "9:16"},
+    "reframe": {"mode": "auto", "deadzone": .035, "max_pan": .25},   # auto = full-screen tracking; fit = letterbox
     "publish": {
         "mode": "facebook",               # facebook (local upload) | instagram (needs public_base_url)
         "ig_user_id": "", "access_token": "", "api_version": "v26.0",
