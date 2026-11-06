@@ -45,7 +45,7 @@ def checks() -> list[dict]:
         gpu = ctranslate2.get_cuda_device_count() > 0
     except Exception:
         pass
-    libs = importlib.util.find_spec("nvidia") is not None
+    libs = _has_module("nvidia.cublas")
     detail = "CPU mode (small model)"
     if gpu:
         detail = "CUDA detected (turbo model)" + ("" if libs or os.name != "nt" else
@@ -61,6 +61,14 @@ def checks() -> list[dict]:
     out.append(_ok("Instagram", bool(p["ig_user_id"] and p["access_token"]),
                    f"{p['mode']} login", "Optional. Add your IG user ID and token in Settings to post."))
     return out
+
+
+def _has_module(name: str) -> bool:
+    """find_spec('a.b') raises when 'a' itself is missing; treat that as not installed."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def fix_all() -> list[str]:
@@ -79,7 +87,9 @@ def fix_all() -> list[str]:
             pip(pkg)
     if importlib.util.find_spec("yt_dlp") and importlib.util.find_spec("yt_dlp_ejs") is None:
         pip("yt-dlp[default]")                    # adds yt-dlp-ejs, which solves YouTube's player challenges
-    if which("nvidia-smi") and importlib.util.find_spec("nvidia.cublas") is None:
+    if importlib.util.find_spec("PIL") is None:
+        pip("Pillow")
+    if which("nvidia-smi") and not _has_module("nvidia.cublas"):
         pip("nvidia-cublas-cu12", "nvidia-cudnn-cu12<10")   # CUDA 12 libraries faster-whisper needs on the GPU
     try:
         import cv2

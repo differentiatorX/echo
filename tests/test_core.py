@@ -179,3 +179,18 @@ def test_direct_validation_and_timeline_mapping():
     assert _to_out(2.0, pieces) == 1.0 and _to_out(4.0, pieces) == 2.0 and _to_out(6.0, pieces) == 3.0
     zp = _zoom_pass([(1.0, 2.0, "push", 1.0, 1.3, 5.0)], [(0, 5, .4, .35)], 30, 1080, 1920)
     assert "zoompan" in zp and "1.300" in zp and "0.400" in zp
+
+
+def test_pieces_split_at_shot_changes_without_breaking_audio():
+    from echoclip.render import _split_at_shots
+    pieces = [{"src_s": 0.0, "src_e": 10.0, "out_s": 0.0, "cut_in": True, "cut_out": True, "zoom": 1.0, "group": "body"}]
+    analysis = {"shots": [{"s": 0, "e": 4}, {"s": 4, "e": 7}, {"s": 7, "e": 12}]}
+    out = _split_at_shots(pieces, analysis)
+    assert [(p["src_s"], p["src_e"]) for p in out] == [(0.0, 4), (4, 7), (7, 10.0)]
+    assert [p["out_s"] for p in out] == [0.0, 4.0, 7.0]
+    assert out[0]["cut_in"] and not out[0]["cut_out"] and not out[1]["cut_in"] and out[-1]["cut_out"]
+
+
+def test_doctor_handles_missing_parent_package():
+    from echoclip.doctor import _has_module
+    assert _has_module("json") and not _has_module("nvidia_does_not_exist.cublas")

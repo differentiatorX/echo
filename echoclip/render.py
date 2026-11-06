@@ -133,10 +133,10 @@ def _to_out(t: float, pieces: list[dict]) -> float:
     return pieces[-1]["out_s"] + pieces[-1]["src_e"] - pieces[-1]["src_s"]
 
 
-def _zoom_pass(moves: list[tuple], focus: list[tuple], fps: int, OW: int, OH: int) -> str:
+def _zoom_pass(moves: list[tuple], focus: list[tuple], fps: int, OW: int, OH: int, offset: float = 0.0) -> str:
     """One smooth zoom over the edited clip. moves: (out_start, out_end, kind, rel_from, rel_to, hold).
     focus: (out_start, out_end, fx, fy) per piece, so each zoom is anchored on that shot's subject."""
-    T = f"(on/{fps})"
+    T = f"(on/{fps}+{offset:.3f})"
     z = "1"
     for a, b, kind, r0, r1, hold in sorted(moves, key=lambda m: m[0]):
         if kind == "push":                       # hold = the shot's end: zoom returns to normal on the next shot
@@ -152,6 +152,23 @@ def _zoom_pass(moves: list[tuple], focus: list[tuple], fps: int, OW: int, OH: in
         fye = f"if(lt({T},{s1:.3f}),{fy:.3f},{fye})"
     return (f"scale={OW * 2}:{OH * 2}:flags=lanczos,"
             f"zoompan=z='{z}':x='({fxe})*iw*(1-1/zoom)':y='({fye})*ih*(1-1/zoom)':d=1:s={OW}x{OH}:fps={fps},setsar=1")
+
+
+def _split_at_shots(pieces: list[dict], analysis: dict) -> list[dict]:
+    """A continuous piece can span several camera shots; cut it at each shot change so every
+    shot gets its own direction. Internal cuts are seamless (no audio fades)."""
+    starts = [sh["s"] for sh in analysis["shots"][1:]]
+    out, t = [], 0.0
+    for p in pieces:
+        cuts = [c for c in starts if p["src_s"] + .04 < c < p["src_e"] - .04]
+        bounds = [p["src_s"], *cuts, p["src_e"]]
+        for k, (a, b) in enumerate(zip(bounds, bounds[1:])):
+            q = dict(p, src_s=a, src_e=b, out_s=t,
+                     cut_in=p["cut_in"] if k == 0 else False,
+                     cut_out=p["cut_out"] if k == len(bounds) - 2 else False)
+            out.append(q)
+            t += b - a
+    return out
 
 
 def _shot_index(analysis: dict, t: float) -> int:
@@ -233,30 +250,46 @@ def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg:
     ass_name = out.stem + ".ass"
     (work / ass_name).write_text(ass_text, "utf-8")
 
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-v", "error"]
+    if analysis.get("directions"):
+        pieces = _split_at_shots(pieces, analysis)
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-v", "error", "-i", str(seg.resolve())]
     graph = []
     focus = []
+    shared, last_end, nxt = [], -1.0, 1
+    for i, p in enumerate(pieces):
+        if p["src_s"] >= last_end - 1e-3:        # in order: cut from the single shared decode
+            shared.append(i)
+            last_end = p["src_e"]
+    if shared:
+        graph.append("[0:v]split=" + str(len(shared)) + "".join(f"[sv{i}]" for i in shared))
+        graph.append("[0:a]asplit=" + str(len(shared)) + "".join(f"[sa{i}]" for i in shared))
     for i, p in enumerate(pieces):
         dur = p["src_e"] - p["src_s"]
-        cmd += ["-ss", f"{p['src_s']:.3f}", "-t", f"{dur:.3f}", "-i", str(seg.resolve())]
+        if i in shared:
+            graph.append(f"[sv{i}]trim=start={p['src_s']:.4f}:end={p['src_e']:.4f},setpts=PTS-STARTPTS[pv{i}]")
+            graph.append(f"[sa{i}]atrim=start={p['src_s']:.4f}:end={p['src_e']:.4f},asetpts=PTS-STARTPTS[pa{i}]")
+        else:                                    # out of order (the cold-open teaser): its own short seek
+            cmd += ["-ss", f"{p['src_s']:.3f}", "-t", f"{dur:.3f}", "-i", str(seg.resolve())]
+            graph.append(f"[{nxt}:v]null[pv{i}]")
+            graph.append(f"[{nxt}:a]anull[pa{i}]")
+            nxt += 1
         mid = (p["src_s"] + p["src_e"]) / 2
         lay = layout_at(analysis, mid)
         dv = (analysis.get("directions") or {}).get(str(_shot_index(analysis, mid)))
         if dv:
             chain, fo = _directed(i, dv, lay, W, H, r["fps"], accent, OW, OH, p["src_s"], p["src_e"])
-            graph.append(chain)
             focus.append((p["out_s"], p["out_s"] + dur, fo[0], fo[1]))
         else:
+            chain = _vchain(i, lay, W, H, p["zoom"] if lay.get("mode") == "crop" else 1.0, r["fps"], accent, OW, OH, p["src_s"], p["src_e"])
             focus.append((p["out_s"], p["out_s"] + dur, .5, .42))
-            graph.append(_vchain(i, lay, W, H, p["zoom"] if lay.get("mode") == "crop" else 1.0, r["fps"], accent, OW, OH, p["src_s"], p["src_e"]))
-        a = f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+        graph.append(chain.replace(f"[{i}:v]", f"[pv{i}]", 1))
+        a = f"[pa{i}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if p["cut_in"]:
             a += ",afade=t=in:d=0.012"
         if p["cut_out"]:
             a += f",afade=t=out:st={max(0.0, dur - 0.015):.3f}:d=0.015"
         graph.append(a + f",apad=whole_dur={dur:.3f},atrim=0:{dur:.3f}[a{i}]")
     n = len(pieces)
-    nxt = n
     graph.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca]")
 
     # ---- video overlays
@@ -282,7 +315,35 @@ def render(seg: Path, edit: dict, analysis: dict, ass_text: str, out: Path, cfg:
                     zmoves.append((a, a, "punch", level, rel, min(m["hold"], until - a)))
     zmoves.sort(key=lambda m: m[0])
     if zmoves:
-        graph.append(f"{vlast}{_zoom_pass(zmoves, focus, r['fps'], OW, OH)}[czm]")
+        # the expensive zoom engine runs only where a move happens; everything else passes straight through
+        fps = r["fps"]
+        spans = []
+        for a, b, kind, r0, r1, hold in zmoves:
+            lo, hi = (a, hold) if kind == "push" else (a - .25, a + hold + .25)
+            spans.append([max(0.0, lo), min(D, hi)])
+        spans.sort()
+        merged = []
+        for lo, hi in spans:
+            if merged and lo <= merged[-1][1] + .1:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        snap = lambda t: round(t * fps) / fps
+        segs, t = [], 0.0
+        for lo, hi in merged:
+            lo, hi = snap(lo), snap(hi)
+            if lo - t > 1 / fps:
+                segs.append((t, lo, False))
+            if hi - lo > 1 / fps:
+                segs.append((lo, hi, True))
+            t = hi
+        if D - t > 1 / fps:
+            segs.append((t, D, False))
+        graph.append(f"{vlast}split={len(segs)}" + "".join(f"[zs{k}]" for k in range(len(segs))))
+        for k, (lo, hi, moving) in enumerate(segs):
+            z = f",{_zoom_pass(zmoves, focus, fps, OW, OH, lo)}" if moving else ""
+            graph.append(f"[zs{k}]trim=start={lo:.4f}:end={hi:.4f},setpts=PTS-STARTPTS{z}[zo{k}]")
+        graph.append("".join(f"[zo{k}]" for k in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0[czm]")
         vlast = "[czm]"
     logo = Path(st.get("logo") or "").expanduser()
     if st.get("logo") and logo.is_file():
